@@ -1,0 +1,27 @@
+# Private business and product material — never commit
+/private/
+/docs/internal/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.jks
+
+# Local databases and backups
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+*.bak
+
+# Operating system files
+.DS_Store
+Thumbs.db
