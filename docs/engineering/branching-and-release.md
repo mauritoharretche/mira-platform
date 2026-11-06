@@ -2,12 +2,12 @@
 
 ## Branches
 
-- `main`: protected, releasable baseline.
-- Short-lived branches: `feat/`, `fix/`, `docs/`, `chore/`, `test/`, `refactor/`.
+- `main`: current engineering-foundation baseline. Maintainers may commit atomic, approved changes directly during this phase.
+- Short-lived branches: `feat/`, `fix/`, `docs/`, `chore/`, `test/`, `refactor/`, when useful.
 
 ## Pull requests
 
-All changes after bootstrap enter `main` through pull requests. Require at least one independent review where the team has more than one eligible reviewer. Dismiss stale approvals after new commits for sensitive changes.
+Pull requests are optional during the current phase. Require explicit human approval for architecture, security, data, payments, privacy, infrastructure and production-sensitive changes; reassess mandatory PR protections when the delivery process matures.
 
 ## Releases
 

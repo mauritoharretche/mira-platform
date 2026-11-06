@@ -2,7 +2,7 @@
 
 MIRA Platform is a greenfield software project exploring an integrated digital platform for specialty retail and related customer experiences.
 
-> **Status:** Discovery and engineering foundation. Not production-ready. APIs, architecture, features and deployment model are subject to review and change.
+> **Status:** Engineering foundation. Not production-ready. The initial modular architecture and development stack are accepted; product, integrations and deployment remain subject to review.
 
 ## Repository goals
 
@@ -21,7 +21,7 @@ This repository is public, but **no open-source license has been selected yet**.
 2. Open the repository root in VS Code.
 3. Read `AGENTS.md`, `CONTRIBUTING.md` and the engineering standards under `docs/engineering/`.
 4. Internal, non-public reference material may be placed locally under `private/`. This directory is git-ignored and must never be force-added.
-5. No application stack is approved yet. Do not create application code until Phase 0 discovery and architecture decisions are reviewed.
+5. Install the locked local toolchain with `mise install --locked python node pnpm uv`, then follow [`docs/engineering/local-development.md`](docs/engineering/local-development.md). Do not use production credentials or data.
 
 ## Repository map
 

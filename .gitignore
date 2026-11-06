@@ -7,6 +7,13 @@
 .env.*
 !.env.example
 
+# Local tool and build artifacts
+.venv/
+node_modules/
+.next/
+__pycache__/
+*.tsbuildinfo
+
 # Private keys and certificates
 *.pem
 *.key

@@ -12,5 +12,5 @@ A change is Done only when all applicable criteria are met:
 - [ ] Migrations have rollout, compatibility and recovery plans.
 - [ ] Observability and operational documentation are updated.
 - [ ] Public diff contains no secrets or internal information.
-- [ ] Pull request received required human review.
+- [ ] Required human approval is recorded; if a pull request is used, required review is recorded there.
 - [ ] Deployment or release authorization is recorded when applicable.

@@ -11,7 +11,7 @@ Thank you for helping improve MIRA Platform. The project is in its discovery and
 
 ## Branches
 
-Use short-lived branches such as:
+During the initial bootstrap, discovery and engineering-foundation phases, maintainers may commit atomically to `main` after explicit approval. Short-lived branches remain available when useful:
 
 - `docs/<topic>`
 - `chore/<topic>`
@@ -19,11 +19,11 @@ Use short-lived branches such as:
 - `fix/<topic>`
 - `test/<topic>`
 
-Do not commit directly to `main` after bootstrap. Do not force-push shared branches.
+Pull requests are optional in the current workflow. Do not force-push or rewrite shared history.
 
 ## Pull requests
 
-A pull request should include:
+When a pull request is used, it should include:
 
 - Problem and motivation.
 - Scope and explicit non-goals.
@@ -33,7 +33,7 @@ A pull request should include:
 - Migration, rollout and rollback considerations where applicable.
 - Screenshots or recordings for user-facing changes, with no personal or sensitive data.
 
-Keep PRs focused and reasonably small. Request review from a maintainer. Do not merge your own sensitive architectural or data changes without independent review.
+Keep changes focused and reasonably small. Human approval remains required for architecture, security, data, payment, privacy and production-sensitive changes.
 
 ## Commit messages
 

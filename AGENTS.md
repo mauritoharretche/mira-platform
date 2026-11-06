@@ -126,12 +126,14 @@ These are engineering guardrails, not final business rules. Domain behavior must
 
 ## 11. Git collaboration
 
-- Never work directly on `main` after the initial repository bootstrap.
-- Use short-lived branches and focused pull requests.
-- Do not force-push shared branches or rewrite shared history.
-- Keep commits atomic and descriptive.
-- PRs must describe impact, tests, risks, screenshots where relevant and rollout considerations.
-- Human review is required for architecture, security, data, payment, privacy and production-sensitive changes.
+- During the initial bootstrap, discovery and engineering-foundation phases, maintainers may commit directly to `main`.
+- Pull requests are not required in the current workflow.
+- Keep commits small, atomic and descriptive.
+- Never force-push, rewrite shared history or delete `main`.
+- Before staging or publishing, inspect `git status`, staged diffs and file names.
+- Never stage or publish content from the ignored `private/` directory.
+- Human approval is required before decisions or changes affecting architecture, security, data, payments, privacy, infrastructure or production behavior.
+- Reassess branch protection and pull request workflows when the team and delivery process mature.
 
 ## 12. Project status
 
