@@ -9,6 +9,10 @@ _REQUIRED_PERMISSIONS = {
         "catalog.add_variant",
     ),
     Capability.ADD_VARIANT_TO_PRODUCT: ("catalog.add_variant",),
+    Capability.CREATE_CATEGORY: ("catalog.add_category",),
+    Capability.LIST_CATEGORIES: ("catalog.view_category",),
+    Capability.SET_PRODUCT_CATEGORY: ("catalog.set_product_category",),
+    Capability.SET_PRODUCT_ACTIVE: ("catalog.set_product_active",),
 }
 
 

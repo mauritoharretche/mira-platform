@@ -4,3 +4,9 @@ from enum import Enum
 class CatalogAuditAction(Enum):
     PRODUCT_CREATED_WITH_INITIAL_VARIANT = "catalog.product_created_with_initial_variant"
     VARIANT_ADDED_TO_PRODUCT = "catalog.variant_added_to_product"
+
+
+class CatalogChangeAuditAction(Enum):
+    CATEGORY_CREATED = "catalog.category_created"
+    PRODUCT_CATEGORY_CHANGED = "catalog.product_category_changed"
+    PRODUCT_ACTIVE_CHANGED = "catalog.product_active_changed"

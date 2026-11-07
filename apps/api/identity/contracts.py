@@ -6,6 +6,10 @@ class Capability(Enum):
     READ_PRODUCT = "catalog.read_product"
     CREATE_PRODUCT_WITH_INITIAL_VARIANT = "catalog.create_product_with_initial_variant"
     ADD_VARIANT_TO_PRODUCT = "catalog.add_variant_to_product"
+    CREATE_CATEGORY = "catalog.create_category"
+    LIST_CATEGORIES = "catalog.list_categories"
+    SET_PRODUCT_CATEGORY = "catalog.set_product_category"
+    SET_PRODUCT_ACTIVE = "catalog.set_product_active"
 
 
 @dataclass(frozen=True)

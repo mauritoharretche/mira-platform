@@ -6,5 +6,6 @@
 | [ADR-012](adr/ADR-012-modular-monolith-boundaries.md) | Modular monolith and API boundaries | Accepted | 2026-11-06 |
 | [ADR-013](adr/ADR-013-minimal-identity-and-access.md) | Minimal internal identity and access | Accepted | 2026-11-06 |
 | [ADR-014](adr/ADR-014-catalog-authorization-and-transactional-audit.md) | Catalog authorization and transactional audit | Accepted | 2026-11-07 |
+| [ADR-015](adr/ADR-015-catalog-categories-and-activation.md) | Catalog categories, activation and typed change audit | Accepted | 2026-11-07 |
 
 See `adr/ADR-TEMPLATE.md` for the required format.
