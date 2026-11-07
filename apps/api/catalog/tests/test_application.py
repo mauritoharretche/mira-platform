@@ -1,5 +1,7 @@
 from uuid import uuid4
 
+from django.contrib.auth import authenticate, get_user_model
+from django.contrib.auth.models import Permission
 from django.db import IntegrityError
 from django.test import TestCase
 
@@ -14,8 +16,26 @@ from catalog.models import Product, Variant
 
 
 class CatalogApplicationTests(TestCase):
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.password = "fictional-test-password-only"
+        cls.operator = get_user_model().objects.create_user(
+            username="fictional-catalog-operator", password=cls.password
+        )
+        cls.operator.user_permissions.add(
+            *Permission.objects.filter(
+                content_type__app_label="catalog",
+                codename__in=["add_product", "add_variant", "view_product", "view_variant"],
+            )
+        )
+
+    def setUp(self) -> None:
+        self.principal = authenticate(username=self.operator.username, password=self.password)
+        self.assertIsNotNone(self.principal)
+
     def test_creates_product_with_normalized_initial_variant(self) -> None:
         product = create_product_with_initial_variant(
+            principal=self.principal,
             product_name="  Trail Mix  ",
             variant_label="  Small pack  ",
             sku="  ABC-01  ",
@@ -34,17 +54,19 @@ class CatalogApplicationTests(TestCase):
 
     def test_adds_variant_and_gets_product_with_variants(self) -> None:
         product = create_product_with_initial_variant(
+            principal=self.principal,
             product_name="Fictional cereal",
             variant_label="Standard",
             sku="CAT-001",
         )
         added_variant = add_variant_to_product(
+            principal=self.principal,
             product_id=product.id,
             label="Large",
             sku="CAT-002",
         )
 
-        loaded_product = get_product(product_id=product.id)
+        loaded_product = get_product(principal=self.principal, product_id=product.id)
 
         self.assertEqual(added_variant.product_id, product.id)
         self.assertEqual({variant.sku for variant in loaded_product.variants.all()}, {"CAT-001", "CAT-002"})
@@ -52,6 +74,7 @@ class CatalogApplicationTests(TestCase):
     def test_rejects_unknown_product_when_adding_variant(self) -> None:
         with self.assertRaises(ProductNotFoundError):
             add_variant_to_product(
+                principal=self.principal,
                 product_id=uuid4(),
                 label="Fictional variant",
                 sku="CAT-001",
@@ -65,16 +88,18 @@ class CatalogApplicationTests(TestCase):
         ):
             with self.subTest(arguments=arguments):
                 with self.assertRaises(CatalogValidationError):
-                    create_product_with_initial_variant(**arguments)
+                    create_product_with_initial_variant(principal=self.principal, **arguments)
 
     def test_normalizes_barcodes_without_changing_case(self) -> None:
         product = create_product_with_initial_variant(
+            principal=self.principal,
             product_name="Fictional product",
             variant_label="Fictional label",
             sku="AbC-01",
             barcode=" AbC-01 ",
         )
         product_with_empty_barcode = create_product_with_initial_variant(
+            principal=self.principal,
             product_name="Another fictional product",
             variant_label="Another fictional label",
             sku="AbC-02",
@@ -89,6 +114,7 @@ class CatalogApplicationTests(TestCase):
 
     def test_rolls_back_product_when_initial_variant_violates_sku_constraint(self) -> None:
         create_product_with_initial_variant(
+            principal=self.principal,
             product_name="Existing product",
             variant_label="Existing variant",
             sku="CAT-001",
@@ -96,6 +122,7 @@ class CatalogApplicationTests(TestCase):
 
         with self.assertRaises(IntegrityError):
             create_product_with_initial_variant(
+                principal=self.principal,
                 product_name="Partial product",
                 variant_label="Conflicting variant",
                 sku="CAT-001",

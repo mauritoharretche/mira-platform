@@ -2,6 +2,11 @@ from uuid import UUID
 
 from django.db import transaction
 
+from audit import application as audit_application
+from audit.contracts import CatalogAuditAction
+from identity import application as identity_application
+from identity.contracts import Capability
+
 from .models import Product, Variant
 
 
@@ -38,47 +43,86 @@ def _normalize_variant_values(
 
 
 def create_product_with_initial_variant(
-    *, product_name: str, variant_label: str, sku: str, barcode: str | None = None
+    *,
+    principal: object,
+    product_name: str,
+    variant_label: str,
+    sku: str,
+    barcode: str | None = None,
 ) -> Product:
-    normalized_product_name = _normalize_required(product_name, "product name")
-    normalized_label, normalized_sku, normalized_barcode = _normalize_variant_values(
-        label=variant_label, sku=sku, barcode=barcode
-    )
+    """Create and audit atomically; principal must come from trusted authentication.
 
-    with transaction.atomic():
+    A User instance alone does not prove authentication. The caller owns that
+    trust boundary. An enclosing transaction can still roll back this operation.
+    """
+    with transaction.atomic(using="default"):
+        actor = identity_application.require_capability(
+            principal=principal, capability=Capability.CREATE_PRODUCT_WITH_INITIAL_VARIANT
+        )
+        normalized_product_name = _normalize_required(product_name, "product name")
+        normalized_label, normalized_sku, normalized_barcode = _normalize_variant_values(
+            label=variant_label, sku=sku, barcode=barcode
+        )
         product = Product.objects.create(name=normalized_product_name)
-        Variant.objects.create(
+        variant = Variant.objects.create(
             product=product,
             label=normalized_label,
             sku=normalized_sku,
             barcode=normalized_barcode,
+        )
+        audit_application.record_catalog_success(
+            actor=actor,
+            action=CatalogAuditAction.PRODUCT_CREATED_WITH_INITIAL_VARIANT,
+            product_id=product.id,
+            variant_id=variant.id,
         )
 
     return product
 
 
 def add_variant_to_product(
-    *, product_id: UUID, label: str, sku: str, barcode: str | None = None
+    *,
+    principal: object,
+    product_id: UUID,
+    label: str,
+    sku: str,
+    barcode: str | None = None,
 ) -> Variant:
-    normalized_label, normalized_sku, normalized_barcode = _normalize_variant_values(
-        label=label, sku=sku, barcode=barcode
-    )
+    """Authorize a trusted principal and atomically add a variant with its audit."""
+    with transaction.atomic(using="default"):
+        actor = identity_application.require_capability(
+            principal=principal, capability=Capability.ADD_VARIANT_TO_PRODUCT
+        )
+        normalized_label, normalized_sku, normalized_barcode = _normalize_variant_values(
+            label=label, sku=sku, barcode=barcode
+        )
 
-    try:
-        product = Product.objects.get(pk=product_id)
-    except Product.DoesNotExist as error:
-        raise ProductNotFoundError(f"product {product_id} does not exist") from error
+        try:
+            product = Product.objects.get(pk=product_id)
+        except Product.DoesNotExist as error:
+            raise ProductNotFoundError(f"product {product_id} does not exist") from error
 
-    with transaction.atomic():
-        return Variant.objects.create(
+        variant = Variant.objects.create(
             product=product,
             label=normalized_label,
             sku=normalized_sku,
             barcode=normalized_barcode,
         )
+        audit_application.record_catalog_success(
+            actor=actor,
+            action=CatalogAuditAction.VARIANT_ADDED_TO_PRODUCT,
+            product_id=product.id,
+            variant_id=variant.id,
+        )
+
+    return variant
 
 
-def get_product(*, product_id: UUID) -> Product:
+def get_product(*, principal: object, product_id: UUID) -> Product:
+    """Authorize a trusted principal before querying; reads do not create audit rows."""
+    identity_application.require_capability(
+        principal=principal, capability=Capability.READ_PRODUCT
+    )
     try:
         return Product.objects.prefetch_related("variants").get(pk=product_id)
     except Product.DoesNotExist as error:
