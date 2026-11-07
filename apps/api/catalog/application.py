@@ -1,3 +1,4 @@
+from unicodedata import normalize
 from uuid import UUID
 
 from django.db import transaction
@@ -7,7 +8,7 @@ from audit.contracts import CatalogAuditAction
 from identity import application as identity_application
 from identity.contracts import Capability
 
-from .models import Product, Variant
+from .models import Category, Product, Variant
 
 
 class CatalogValidationError(ValueError):
@@ -16,6 +17,10 @@ class CatalogValidationError(ValueError):
 
 class ProductNotFoundError(LookupError):
     """Raised when a Catalog application command references no Product."""
+
+
+class CategoryNotFoundError(LookupError):
+    """Raised when a Catalog application command references no Category."""
 
 
 def _normalize_required(value: str, field_name: str) -> str:
@@ -127,3 +132,93 @@ def get_product(*, principal: object, product_id: UUID) -> Product:
         return Product.objects.prefetch_related("variants").get(pk=product_id)
     except Product.DoesNotExist as error:
         raise ProductNotFoundError(f"product {product_id} does not exist") from error
+
+
+def create_category(*, principal: object, name: str) -> Category:
+    """Create through the trusted boundary; SQL uniqueness does not derive name_key."""
+    with transaction.atomic(using="default"):
+        actor = identity_application.require_capability(
+            principal=principal, capability=Capability.CREATE_CATEGORY
+        )
+        if not isinstance(name, str):
+            raise CatalogValidationError("category name must be text")
+        display_name = normalize("NFC", name.strip())
+        name_key = normalize("NFC", display_name.casefold())
+        if not display_name:
+            raise CatalogValidationError("category name must not be empty")
+        if len(display_name) > 255 or len(name_key) > 255:
+            raise CatalogValidationError("category name exceeds technical limits")
+        category = Category.objects.create(name=display_name, name_key=name_key)
+        audit_application.record_category_created(actor=actor, category_id=category.id)
+
+    return category
+
+
+def list_categories(*, principal: object) -> list[Category]:
+    """Return an internal administrative list, not a public storefront contract."""
+    identity_application.require_capability(
+        principal=principal, capability=Capability.LIST_CATEGORIES
+    )
+    return list(Category.objects.order_by("name_key", "id"))
+
+
+def set_product_category(
+    *, principal: object, product_id: UUID, category_id: UUID | None
+) -> Product:
+    """Serialize category and activation changes on the same Product row."""
+    with transaction.atomic(using="default"):
+        actor = identity_application.require_capability(
+            principal=principal, capability=Capability.SET_PRODUCT_CATEGORY
+        )
+        try:
+            product = Product.objects.select_for_update().get(pk=product_id)
+        except Product.DoesNotExist as error:
+            raise ProductNotFoundError(f"product {product_id} does not exist") from error
+        if category_id is not None:
+            try:
+                category = Category.objects.get(pk=category_id)
+            except Category.DoesNotExist as error:
+                raise CategoryNotFoundError(f"category {category_id} does not exist") from error
+            category_id = category.id
+        elif product.is_active:
+            raise CatalogValidationError("an active product requires a category")
+        if product.category_id == category_id:
+            return product
+
+        previous_category_id = product.category_id
+        product.category_id = category_id
+        product.save(update_fields=["category", "updated_at"])
+        audit_application.record_product_category_changed(
+            actor=actor, product_id=product.id,
+            previous_category_id=previous_category_id, new_category_id=category_id,
+        )
+
+    return product
+
+
+def set_product_active(*, principal: object, product_id: UUID, is_active: bool) -> Product:
+    """Set administrative state only; active does not mean published or sellable."""
+    with transaction.atomic(using="default"):
+        actor = identity_application.require_capability(
+            principal=principal, capability=Capability.SET_PRODUCT_ACTIVE
+        )
+        if type(is_active) is not bool:
+            raise CatalogValidationError("is_active must be a boolean")
+        try:
+            product = Product.objects.select_for_update().get(pk=product_id)
+        except Product.DoesNotExist as error:
+            raise ProductNotFoundError(f"product {product_id} does not exist") from error
+        if is_active and product.category_id is None:
+            raise CatalogValidationError("an active product requires a category")
+        if product.is_active == is_active:
+            return product
+
+        previous_is_active = product.is_active
+        product.is_active = is_active
+        product.save(update_fields=["is_active", "updated_at"])
+        audit_application.record_product_active_changed(
+            actor=actor, product_id=product.id,
+            previous_is_active=previous_is_active, new_is_active=is_active,
+        )
+
+    return product

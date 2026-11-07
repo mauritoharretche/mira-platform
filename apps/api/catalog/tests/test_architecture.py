@@ -18,7 +18,10 @@ class CatalogModuleBoundaryTests(SimpleTestCase):
         }
         self.assertEqual(
             set(operations),
-            {"create_product_with_initial_variant", "add_variant_to_product", "get_product"},
+            {
+                "create_product_with_initial_variant", "add_variant_to_product", "get_product",
+                "create_category", "list_categories", "set_product_category", "set_product_active",
+            },
         )
         for name, operation in operations.items():
             with self.subTest(operation=name):
@@ -35,7 +38,10 @@ class CatalogModuleBoundaryTests(SimpleTestCase):
             for name, function in inspect.getmembers(audit_application, inspect.isfunction)
             if function.__module__ == audit_application.__name__ and not name.startswith("_")
         }
-        self.assertEqual(public_functions, {"record_catalog_success"})
+        self.assertEqual(public_functions, {
+            "record_catalog_success", "record_category_created",
+            "record_product_category_changed", "record_product_active_changed",
+        })
 
     def test_explicit_imports_respect_model_ownership_and_dependency_direction(self) -> None:
         api_root = Path(__file__).resolve().parents[2]
