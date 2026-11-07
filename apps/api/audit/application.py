@@ -1,3 +1,4 @@
+from decimal import Context, Decimal, Inexact, InvalidOperation, ROUND_HALF_EVEN, localcontext
 from uuid import UUID
 
 from django.db import transaction
@@ -5,8 +6,8 @@ from django.db.transaction import TransactionManagementError
 
 from identity.contracts import ActorContext
 
-from .contracts import CatalogAuditAction, CatalogChangeAuditAction
-from .models import CatalogAuditEntry, CatalogChangeAuditEntry
+from .contracts import CatalogAuditAction, CatalogChangeAuditAction, CatalogPriceAuditAction
+from .models import CatalogAuditEntry, CatalogChangeAuditEntry, CatalogPriceAuditEntry
 
 
 def record_catalog_success(
@@ -94,3 +95,58 @@ def record_product_active_changed(
         target_id=product_id,
         previous_is_active=previous_is_active, new_is_active=new_is_active,
     )
+
+
+def _normalize_audit_price(amount: Decimal) -> Decimal:
+    if (
+        not isinstance(amount, Decimal) or not amount.is_finite()
+        or not Decimal("0") < amount <= Decimal("999999999999.99")
+    ):
+        raise ValueError("Invalid audit price")
+    try:
+        with localcontext(Context(prec=14, rounding=ROUND_HALF_EVEN, traps=[Inexact, InvalidOperation])):
+            return amount.quantize(Decimal("0.01"))
+    except (Inexact, InvalidOperation) as error:
+        raise ValueError("Audit price must be exactly representable at two decimal places") from error
+
+
+def record_variant_price_set(
+    *, actor: ActorContext, variant_id: UUID,
+    previous_revision_id: UUID | None, new_revision_id: UUID,
+    previous_amount: Decimal | None, new_amount: Decimal,
+    currency: str, price_basis: str,
+) -> UUID:
+    """Append attribution to the caller's transaction, without authenticating it.
+
+    The controlled Catalog writer supplies before/after values. SQL constraints
+    do not independently verify correspondence with another module's revision.
+    """
+    if not transaction.get_connection("default").in_atomic_block:
+        raise TransactionManagementError("Audit requires an active transaction")
+    if not isinstance(actor, ActorContext):
+        raise TypeError("ActorContext required")
+    if not isinstance(actor.actor_id, str) or not actor.actor_id.strip() or len(actor.actor_id) > 128:
+        raise ValueError("Invalid actor identifier")
+    if not isinstance(variant_id, UUID) or not isinstance(new_revision_id, UUID):
+        raise ValueError("UUID references required")
+    if currency != "ARS" or price_basis != "PER_VARIANT":
+        raise ValueError("Unsupported audit currency or price basis")
+    normalized_new = _normalize_audit_price(new_amount)
+    normalized_previous = None
+    if previous_revision_id is None:
+        if previous_amount is not None:
+            raise ValueError("Previous revision and amount must both be absent")
+    else:
+        if not isinstance(previous_revision_id, UUID) or previous_revision_id == new_revision_id:
+            raise ValueError("Distinct UUID revision references required")
+        normalized_previous = _normalize_audit_price(previous_amount)
+        if normalized_previous == normalized_new:
+            raise ValueError("A price change requires distinct amounts")
+
+    entry = CatalogPriceAuditEntry.objects.using("default").create(
+        actor_id=actor.actor_id, action=CatalogPriceAuditAction.VARIANT_PRICE_SET.value,
+        variant_id=variant_id, previous_revision_id=previous_revision_id,
+        new_revision_id=new_revision_id, previous_amount=normalized_previous,
+        new_amount=normalized_new, currency=currency, price_basis=price_basis, result="success",
+    )
+    return entry.id

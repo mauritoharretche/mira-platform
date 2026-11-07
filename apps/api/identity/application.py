@@ -13,6 +13,11 @@ _REQUIRED_PERMISSIONS = {
     Capability.LIST_CATEGORIES: ("catalog.view_category",),
     Capability.SET_PRODUCT_CATEGORY: ("catalog.set_product_category",),
     Capability.SET_PRODUCT_ACTIVE: ("catalog.set_product_active",),
+    Capability.SET_VARIANT_PRICE: ("catalog.set_variant_price",),
+    Capability.READ_VARIANT_PRICE: ("catalog.view_variantpricerevision",),
+    Capability.READ_VARIANT_PRICE_HISTORY: (
+        "catalog.view_variantpricerevision", "catalog.view_variant_price_history",
+    ),
 }
 
 
