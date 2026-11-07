@@ -10,3 +10,7 @@ class CatalogChangeAuditAction(Enum):
     CATEGORY_CREATED = "catalog.category_created"
     PRODUCT_CATEGORY_CHANGED = "catalog.product_category_changed"
     PRODUCT_ACTIVE_CHANGED = "catalog.product_active_changed"
+
+
+class CatalogPriceAuditAction(Enum):
+    VARIANT_PRICE_SET = "catalog.variant_price_set"

@@ -1,3 +1,4 @@
+from decimal import Context, Decimal, Inexact, InvalidOperation, ROUND_HALF_EVEN, localcontext
 from unicodedata import normalize
 from uuid import UUID
 
@@ -8,7 +9,8 @@ from audit.contracts import CatalogAuditAction
 from identity import application as identity_application
 from identity.contracts import Capability
 
-from .models import Category, Product, Variant
+from .contracts import PriceBasis, PriceSnapshot
+from .models import Category, Product, Variant, VariantPriceRevision
 
 
 class CatalogValidationError(ValueError):
@@ -222,3 +224,114 @@ def set_product_active(*, principal: object, product_id: UUID, is_active: bool) 
         )
 
     return product
+
+
+class VariantNotFoundError(LookupError):
+    """Raised when a pricing operation references no Variant."""
+
+
+class PriceConflictError(RuntimeError):
+    """The expected revision is stale, including a retry after a prior commit."""
+
+
+def _normalize_price_amount(amount: Decimal) -> Decimal:
+    if (
+        not isinstance(amount, Decimal) or not amount.is_finite()
+        or not Decimal("0") < amount <= Decimal("999999999999.99")
+    ):
+        raise CatalogValidationError("price must be a finite positive Decimal within technical bounds")
+    try:
+        with localcontext(Context(prec=14, rounding=ROUND_HALF_EVEN, traps=[Inexact, InvalidOperation])):
+            return amount.quantize(Decimal("0.01"))
+    except (Inexact, InvalidOperation) as error:
+        raise CatalogValidationError("price must be exactly representable at two decimal places") from error
+
+
+def _get_price_variant(variant_id: UUID, *, lock: bool = False) -> Variant:
+    if not isinstance(variant_id, UUID):
+        raise CatalogValidationError("variant_id must be a UUID")
+    variants = Variant.objects.using("default")
+    if lock:
+        variants = variants.select_for_update()
+    try:
+        return variants.get(pk=variant_id)
+    except Variant.DoesNotExist as error:
+        raise VariantNotFoundError(f"variant {variant_id} does not exist") from error
+
+
+def _latest_price_revision(variant_id: UUID) -> VariantPriceRevision | None:
+    return VariantPriceRevision.objects.using("default").filter(
+        variant_id=variant_id
+    ).order_by("-sequence").first()
+
+
+def _price_snapshot(revision: VariantPriceRevision) -> PriceSnapshot:
+    return PriceSnapshot(
+        revision_id=revision.id, variant_id=revision.variant_id, sequence=revision.sequence,
+        amount=revision.amount, currency=revision.currency,
+        price_basis=PriceBasis(revision.price_basis), recorded_at=revision.recorded_at,
+    )
+
+
+def set_variant_price(
+    *, principal: object, variant_id: UUID, amount: Decimal, currency: str,
+    expected_revision_id: UUID | None,
+) -> PriceSnapshot:
+    """Append a revision and audit atomically, rejecting stale expectations first.
+
+    Principal provenance belongs to the trusted authentication boundary. Retrying
+    an already committed change with its old expectation is a conflict even when
+    the amount matches. This is not request-level idempotency or a sales quote.
+    An enclosing transaction may still roll back the returned revision.
+    """
+    with transaction.atomic(using="default"):
+        actor = identity_application.require_capability(
+            principal=principal, capability=Capability.SET_VARIANT_PRICE
+        )
+        normalized_amount = _normalize_price_amount(amount)
+        if currency != "ARS":
+            raise CatalogValidationError("only ARS is supported")
+        if expected_revision_id is not None and not isinstance(expected_revision_id, UUID):
+            raise CatalogValidationError("expected_revision_id must be a UUID or None")
+        variant = _get_price_variant(variant_id, lock=True)
+        previous = _latest_price_revision(variant.id)
+        current_id = previous.id if previous is not None else None
+        if expected_revision_id != current_id:
+            raise PriceConflictError("price revision has changed")
+        if previous is not None and normalized_amount == previous.amount:
+            return _price_snapshot(previous)
+
+        revision = VariantPriceRevision.objects.using("default").create(
+            variant=variant, sequence=previous.sequence + 1 if previous is not None else 1,
+            amount=normalized_amount, currency="ARS", price_basis=PriceBasis.PER_VARIANT.value,
+        )
+        audit_application.record_variant_price_set(
+            actor=actor, variant_id=variant.id,
+            previous_revision_id=current_id, new_revision_id=revision.id,
+            previous_amount=previous.amount if previous is not None else None,
+            new_amount=revision.amount, currency=revision.currency, price_basis=revision.price_basis,
+        )
+
+    return _price_snapshot(revision)
+
+
+def get_current_variant_price(*, principal: object, variant_id: UUID) -> PriceSnapshot | None:
+    """Read the highest visible sequence; absence is distinct from a zero price."""
+    identity_application.require_capability(
+        principal=principal, capability=Capability.READ_VARIANT_PRICE
+    )
+    variant = _get_price_variant(variant_id)
+    revision = _latest_price_revision(variant.id)
+    return _price_snapshot(revision) if revision is not None else None
+
+
+def list_variant_price_history(*, principal: object, variant_id: UUID) -> tuple[PriceSnapshot, ...]:
+    """Return evaluated immutable revisions; recording times are not validity intervals."""
+    identity_application.require_capability(
+        principal=principal, capability=Capability.READ_VARIANT_PRICE_HISTORY
+    )
+    variant = _get_price_variant(variant_id)
+    revisions = VariantPriceRevision.objects.using("default").filter(
+        variant_id=variant.id
+    ).order_by("-sequence")
+    return tuple(_price_snapshot(revision) for revision in revisions)
