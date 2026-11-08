@@ -2,8 +2,11 @@ import uuid
 from decimal import Decimal
 
 from django.db import models
+from django.db.models.functions import Cast, Length, Trim
+from django.db.models.lookups import Exact, GreaterThan
 
 from .contracts import CatalogAuditAction, CatalogChangeAuditAction, CatalogMeasurementAuditAction, CatalogPriceAuditAction
+from .contracts import InventoryMovementAuditAction
 
 
 class CatalogAuditEntry(models.Model):
@@ -212,4 +215,44 @@ class CatalogMeasurementAuditEntry(models.Model):
                 | _measurement_field_differs("net_content_unit"),
                 name="audit_measurement_state_changed",
             ),
+        ]
+
+
+class InventoryMovementAuditEntry(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    actor_id = models.CharField(max_length=128)
+    action = models.CharField(max_length=64, db_collation="C")
+    variant_id = models.UUIDField()
+    position_id = models.UUIDField()
+    movement_id = models.UUIDField()
+    sequence = models.PositiveBigIntegerField()
+    unit = models.CharField(max_length=8, db_collation="C")
+    quantity_before = models.PositiveBigIntegerField()
+    delta = models.BigIntegerField()
+    quantity_after = models.PositiveBigIntegerField()
+    occurred_at = models.DateTimeField(auto_now_add=True)
+    result = models.CharField(max_length=16, default="success", editable=False, db_collation="C")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["movement_id"], name="audit_inventory_movement_unique"),
+            models.CheckConstraint(condition=GreaterThan(Length(Trim("actor_id")), 0), name="audit_inventory_actor_nonempty"),
+            models.CheckConstraint(condition=models.Q(result="success"), name="audit_inventory_result_success"),
+            models.CheckConstraint(condition=models.Q(unit="EACH"), name="audit_inventory_unit_valid"),
+            models.CheckConstraint(condition=models.Q(sequence__gt=0, sequence__lte=2**63 - 1), name="audit_inventory_sequence_valid"),
+            models.CheckConstraint(condition=models.Q(quantity_before__gte=0, quantity_before__lte=2**63 - 1, quantity_after__gte=0, quantity_after__lte=2**63 - 1), name="audit_inventory_quantities_valid"),
+            models.CheckConstraint(condition=models.Q(delta__gte=-(2**63 - 1), delta__lte=2**63 - 1) & ~models.Q(delta=0), name="audit_inventory_delta_valid"),
+            models.CheckConstraint(condition=Exact(
+                Cast("quantity_after", models.DecimalField(max_digits=20, decimal_places=0))
+                - Cast("quantity_before", models.DecimalField(max_digits=20, decimal_places=0)),
+                models.F("delta"),
+            ), name="audit_inventory_equation_valid"),
+            models.CheckConstraint(condition=(
+                models.Q(action=InventoryMovementAuditAction.STOCK_RECEIVED.value, delta__gt=0)
+                | models.Q(action=InventoryMovementAuditAction.STOCK_ADJUSTED.value)
+            ), name="audit_inventory_action_valid"),
+            models.CheckConstraint(condition=(
+                models.Q(sequence=1, quantity_before=0, action=InventoryMovementAuditAction.STOCK_RECEIVED.value)
+                | models.Q(sequence__gt=1)
+            ), name="audit_inventory_initial_valid"),
         ]

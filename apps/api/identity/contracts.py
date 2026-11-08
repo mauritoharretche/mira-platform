@@ -15,6 +15,10 @@ class Capability(Enum):
     READ_VARIANT_PRICE_HISTORY = "catalog.read_variant_price_history"
     SET_VARIANT_MEASUREMENT_SPEC = "catalog.set_variant_measurement_spec"
     READ_VARIANT_MEASUREMENT_SPEC = "catalog.read_variant_measurement_spec"
+    RECEIVE_STOCK = "inventory.receive_stock"
+    ADJUST_STOCK = "inventory.adjust_stock"
+    READ_STOCK = "inventory.read_stock"
+    READ_STOCK_MOVEMENTS = "inventory.read_stock_movements"
 
 
 @dataclass(frozen=True)

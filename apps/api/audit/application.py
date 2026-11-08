@@ -8,6 +8,8 @@ from identity.contracts import ActorContext
 
 from .contracts import CatalogAuditAction, CatalogChangeAuditAction, CatalogMeasurementAuditAction, CatalogPriceAuditAction
 from .models import CatalogAuditEntry, CatalogChangeAuditEntry, CatalogMeasurementAuditEntry, CatalogPriceAuditEntry
+from .contracts import InventoryMovementAuditAction
+from .models import InventoryMovementAuditEntry
 
 
 def record_catalog_success(
@@ -40,6 +42,48 @@ def record_catalog_success(
         result="success",
     )
     return entry.id
+
+
+def record_inventory_movement(
+    *, actor: ActorContext, action: InventoryMovementAuditAction,
+    variant_id: UUID, position_id: UUID, movement_id: UUID,
+    sequence: int, unit: str, quantity_before: int, delta: int, quantity_after: int,
+) -> UUID:
+    """Attribute a controlled Inventory mutation in the caller's transaction.
+
+    Audit neither authenticates the actor nor proves cross-table correspondence.
+    Reason stays in the immutable movement rather than duplicating free text.
+    """
+    if not transaction.get_connection("default").in_atomic_block:
+        raise TransactionManagementError("Audit requires an active transaction")
+    if not isinstance(actor, ActorContext):
+        raise TypeError("ActorContext required")
+    if not isinstance(actor.actor_id, str) or not actor.actor_id.strip() or len(actor.actor_id) > 128:
+        raise ValueError("Invalid actor identifier")
+    if not isinstance(action, InventoryMovementAuditAction):
+        raise ValueError("Unknown inventory audit action")
+    if not all(isinstance(value, UUID) for value in (variant_id, position_id, movement_id)):
+        raise ValueError("UUID references required")
+    maximum = 2**63 - 1
+    if type(sequence) is not int or not 1 <= sequence <= maximum or type(unit) is not str or unit != "EACH":
+        raise ValueError("Invalid inventory sequence or unit")
+    if any(type(value) is not int or not 0 <= value <= maximum for value in (quantity_before, quantity_after)):
+        raise ValueError("Invalid inventory quantity")
+    if type(delta) is not int or not -maximum <= delta <= maximum or delta == 0:
+        raise ValueError("Invalid inventory delta")
+    if quantity_after - quantity_before != delta:
+        raise ValueError("Inventory quantities do not reconcile")
+    if action is InventoryMovementAuditAction.STOCK_RECEIVED and delta <= 0:
+        raise ValueError("A receipt must be positive")
+    if sequence == 1 and (quantity_before != 0 or action is not InventoryMovementAuditAction.STOCK_RECEIVED):
+        raise ValueError("Initial inventory attribution requires a receipt from zero")
+    entry = InventoryMovementAuditEntry.objects.using("default").create(
+        actor_id=actor.actor_id, action=action.value, variant_id=variant_id,
+        position_id=position_id, movement_id=movement_id, sequence=sequence,
+        unit=unit, quantity_before=quantity_before, delta=delta,
+        quantity_after=quantity_after, result="success",
+    )
+    return entry.pk
 
 
 def _normalize_measurement_state(
