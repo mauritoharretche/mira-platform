@@ -9,8 +9,8 @@ from audit.contracts import CatalogAuditAction
 from identity import application as identity_application
 from identity.contracts import Capability
 
-from .contracts import PriceBasis, PriceSnapshot
-from .models import Category, Product, Variant, VariantPriceRevision
+from .contracts import MeasurementUnit, PriceBasis, PriceSnapshot, VariantMeasurementSpecSnapshot
+from .models import Category, Product, Variant, VariantMeasurementSpec, VariantPriceRevision
 
 
 class CatalogValidationError(ValueError):
@@ -335,3 +335,111 @@ def list_variant_price_history(*, principal: object, variant_id: UUID) -> tuple[
         variant_id=variant.id
     ).order_by("-sequence")
     return tuple(_price_snapshot(revision) for revision in revisions)
+
+
+class MeasurementSpecConflictError(RuntimeError):
+    """The expected specification version no longer matches persisted state."""
+
+
+def _normalize_measurement_net_content(
+    amount: Decimal | None, unit: MeasurementUnit | None,
+) -> tuple[Decimal | None, MeasurementUnit | None]:
+    if amount is None and unit is None:
+        return None, None
+    if amount is None or not isinstance(unit, MeasurementUnit) or unit not in (MeasurementUnit.G, MeasurementUnit.KG):
+        raise CatalogValidationError("net content requires both an amount and a mass unit")
+    if (
+        not isinstance(amount, Decimal) or not amount.is_finite()
+        or not Decimal("0") < amount <= Decimal("999999999999.999999")
+    ):
+        raise CatalogValidationError("net content must be a finite positive Decimal within technical bounds")
+    try:
+        with localcontext(Context(prec=18, rounding=ROUND_HALF_EVEN, traps=[Inexact, InvalidOperation])):
+            return amount.quantize(Decimal("0.000001")), unit
+    except (Inexact, InvalidOperation) as error:
+        raise CatalogValidationError("net content must be exactly representable at six decimal places") from error
+
+
+def _get_measurement_variant(variant_id: UUID, *, lock: bool = False) -> Variant:
+    if not isinstance(variant_id, UUID):
+        raise CatalogValidationError("variant_id must be a UUID")
+    variants = Variant.objects.using("default")
+    if lock:
+        variants = variants.select_for_update()
+    try:
+        return variants.get(pk=variant_id)
+    except Variant.DoesNotExist as error:
+        raise VariantNotFoundError(f"variant {variant_id} does not exist") from error
+
+
+def _measurement_snapshot(spec: VariantMeasurementSpec) -> VariantMeasurementSpecSnapshot:
+    return VariantMeasurementSpecSnapshot(
+        spec_id=spec.id, variant_id=spec.variant_id, version=spec.version,
+        sale_unit=MeasurementUnit(spec.sale_unit) if spec.sale_unit is not None else None,
+        net_content_amount=spec.net_content_amount,
+        net_content_unit=MeasurementUnit(spec.net_content_unit) if spec.net_content_unit is not None else None,
+        created_at=spec.created_at, updated_at=spec.updated_at,
+    )
+
+
+def set_variant_measurement_spec(
+    *, principal: object, variant_id: UUID, sale_unit: MeasurementUnit | None,
+    net_content_amount: Decimal | None, net_content_unit: MeasurementUnit | None,
+    expected_version: int | None,
+) -> VariantMeasurementSpecSnapshot | None:
+    """Replace declared metadata atomically; None clears, it never means unchanged.
+
+    The principal comes from a trusted authentication boundary. Stale versions
+    conflict before no-op detection. Missing and explicitly cleared specifications
+    remain distinct. This operation does not convert units or reinterpret prices.
+    An enclosing transaction may still roll back the returned snapshot.
+    """
+    with transaction.atomic(using="default"):
+        actor = identity_application.require_capability(
+            principal=principal, capability=Capability.SET_VARIANT_MEASUREMENT_SPEC
+        )
+        if sale_unit is not None and not isinstance(sale_unit, MeasurementUnit):
+            raise CatalogValidationError("sale_unit must be a MeasurementUnit or None")
+        amount, unit = _normalize_measurement_net_content(net_content_amount, net_content_unit)
+        if expected_version is not None and (type(expected_version) is not int or expected_version <= 0):
+            raise CatalogValidationError("expected_version must be a positive integer or None")
+        variant = _get_measurement_variant(variant_id, lock=True)
+        spec = VariantMeasurementSpec.objects.using("default").filter(variant_id=variant.id).first()
+        if expected_version != (spec.version if spec is not None else None):
+            raise MeasurementSpecConflictError("measurement specification has changed")
+        requested = (sale_unit.value if sale_unit is not None else None, amount, unit.value if unit is not None else None)
+        previous = (spec.sale_unit, spec.net_content_amount, spec.net_content_unit) if spec is not None else (None, None, None)
+        if requested == previous:
+            return _measurement_snapshot(spec) if spec is not None else None
+
+        previous_version = spec.version if spec is not None else None
+        if spec is None:
+            spec = VariantMeasurementSpec.objects.using("default").create(
+                variant=variant, version=1, sale_unit=requested[0],
+                net_content_amount=requested[1], net_content_unit=requested[2],
+            )
+        else:
+            spec.sale_unit, spec.net_content_amount, spec.net_content_unit = requested
+            spec.version += 1
+            spec.save(using="default", update_fields=[
+                "sale_unit", "net_content_amount", "net_content_unit", "version", "updated_at",
+            ])
+        audit_application.record_variant_measurement_spec_changed(
+            actor=actor, variant_id=variant.id, spec_id=spec.id,
+            previous_version=previous_version, new_version=spec.version,
+            previous_sale_unit=previous[0], new_sale_unit=spec.sale_unit,
+            previous_net_content_amount=previous[1], new_net_content_amount=spec.net_content_amount,
+            previous_net_content_unit=previous[2], new_net_content_unit=spec.net_content_unit,
+        )
+
+    return _measurement_snapshot(spec)
+
+
+def get_variant_measurement_spec(*, principal: object, variant_id: UUID) -> VariantMeasurementSpecSnapshot | None:
+    """Return an immutable current declaration, preserving absence as None."""
+    identity_application.require_capability(
+        principal=principal, capability=Capability.READ_VARIANT_MEASUREMENT_SPEC
+    )
+    variant = _get_measurement_variant(variant_id)
+    spec = VariantMeasurementSpec.objects.using("default").filter(variant_id=variant.id).first()
+    return _measurement_snapshot(spec) if spec is not None else None
