@@ -20,3 +20,23 @@ class PriceSnapshot:
     currency: str
     price_basis: PriceBasis
     recorded_at: datetime
+
+
+class MeasurementUnit(Enum):
+    EACH = "EACH"
+    G = "G"
+    KG = "KG"
+
+
+@dataclass(frozen=True)
+class VariantMeasurementSpecSnapshot:
+    """A declaration of metadata, not transaction quantities or a pricing basis."""
+
+    spec_id: UUID
+    variant_id: UUID
+    version: int
+    sale_unit: MeasurementUnit | None
+    net_content_amount: Decimal | None
+    net_content_unit: MeasurementUnit | None
+    created_at: datetime
+    updated_at: datetime

@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from django.db import models
 
-from .contracts import PriceBasis
+from .contracts import MeasurementUnit, PriceBasis
 
 
 class Category(models.Model):
@@ -96,5 +96,47 @@ class VariantPriceRevision(models.Model):
             models.CheckConstraint(
                 condition=models.Q(price_basis=PriceBasis.PER_VARIANT.value),
                 name="catalog_price_basis_valid",
+            ),
+        ]
+
+
+class VariantMeasurementSpec(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    variant = models.OneToOneField(Variant, on_delete=models.PROTECT, related_name="measurement_spec")
+    version = models.PositiveBigIntegerField()
+    sale_unit = models.CharField(
+        max_length=8, null=True, blank=True, db_collation="C",
+        choices=[(unit.value, unit.name) for unit in MeasurementUnit],
+    )
+    net_content_amount = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
+    net_content_unit = models.CharField(
+        max_length=8, null=True, blank=True, db_collation="C",
+        choices=[(unit.value, unit.name) for unit in (MeasurementUnit.G, MeasurementUnit.KG)],
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        permissions = [("set_variant_measurement_spec", "Can set variant measurement specification")]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(version__gt=0), name="catalog_measurement_version_positive",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(sale_unit__isnull=True) | models.Q(
+                    sale_unit__in=[unit.value for unit in MeasurementUnit]
+                ),
+                name="catalog_measurement_sale_unit_valid",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(net_content_amount__isnull=True, net_content_unit__isnull=True)
+                    | models.Q(
+                        net_content_amount__isnull=False, net_content_unit__isnull=False,
+                        net_content_amount__gt=0, net_content_amount__lte=Decimal("999999999999.999999"),
+                        net_content_unit__in=["G", "KG"],
+                    )
+                ),
+                name="catalog_measurement_net_valid",
             ),
         ]

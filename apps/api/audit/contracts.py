@@ -14,3 +14,7 @@ class CatalogChangeAuditAction(Enum):
 
 class CatalogPriceAuditAction(Enum):
     VARIANT_PRICE_SET = "catalog.variant_price_set"
+
+
+class CatalogMeasurementAuditAction(Enum):
+    SPEC_CHANGED = "catalog.variant_measurement_spec_changed"

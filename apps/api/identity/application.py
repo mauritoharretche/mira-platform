@@ -18,6 +18,8 @@ _REQUIRED_PERMISSIONS = {
     Capability.READ_VARIANT_PRICE_HISTORY: (
         "catalog.view_variantpricerevision", "catalog.view_variant_price_history",
     ),
+    Capability.SET_VARIANT_MEASUREMENT_SPEC: ("catalog.set_variant_measurement_spec",),
+    Capability.READ_VARIANT_MEASUREMENT_SPEC: ("catalog.view_variantmeasurementspec",),
 }
 
 

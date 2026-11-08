@@ -22,6 +22,7 @@ class CatalogModuleBoundaryTests(SimpleTestCase):
                 "create_product_with_initial_variant", "add_variant_to_product", "get_product",
                 "create_category", "list_categories", "set_product_category", "set_product_active",
                 "set_variant_price", "get_current_variant_price", "list_variant_price_history",
+                "set_variant_measurement_spec", "get_variant_measurement_spec",
             },
         )
         for name, operation in operations.items():
@@ -43,6 +44,7 @@ class CatalogModuleBoundaryTests(SimpleTestCase):
             "record_catalog_success", "record_category_created",
             "record_product_category_changed", "record_product_active_changed",
             "record_variant_price_set",
+            "record_variant_measurement_spec_changed",
         })
 
     def test_explicit_imports_respect_model_ownership_and_dependency_direction(self) -> None:
