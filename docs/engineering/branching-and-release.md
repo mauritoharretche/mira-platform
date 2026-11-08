@@ -15,7 +15,7 @@ Obtain separate merge approval for the exact PR head and current main SHA. Use s
 
 ## Bootstrap and activation
 
-Engineering Automation Gate A is implemented and tested locally on its own branch. Publish and merge its first PR through the existing manually approved process; do not use the tool to publish itself. ADR-018 acceptance and publication remain separate approvals.
+Engineering Automation Gate A and its GitHub compatibility correction have been merged and verified through the manually approved workflow. Gate B branch protections are active; the real automated publication exercise remains the final validation step and requires separate explicit authorization naming the reviewed canonical manifest SHA-256. Do not use the tool to bootstrap its own publication. ADR-018 acceptance, publication and merge remain separate approvals.
 
 The tool's real publication operation is blocked until Gate B protections are active and read back through both configured and effective-rule APIs. No bootstrap bypass exists. The stored ruleset JSON is inert. Gate B requires specific settings authorization, effective check/source/strictness verification and a separately authorized harmless PR demonstrating actual pending/passing behavior. Keep native auto-merge disabled for v1.
 
