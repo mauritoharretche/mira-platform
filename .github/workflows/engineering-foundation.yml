@@ -25,6 +25,25 @@ jobs:
           version: 2026.11.2
           install: false
       - run: mise install --locked
+      - name: Record revision identity
+        env:
+          MIRA_SOURCE: ${{ github.event.pull_request.head.sha || github.sha }}
+          MIRA_BASE: ${{ github.event.pull_request.base.sha || '' }}
+          MIRA_PR: ${{ github.event.pull_request.number || '' }}
+        run: |
+          mise exec -- python -I -B - <<'PY'
+          import json, os, subprocess
+          git = lambda *args: subprocess.check_output(['git', *args], text=True).strip()
+          parents = [line.split()[1] for line in git('cat-file', '-p', 'HEAD').split('\n\n', 1)[0].splitlines() if line.startswith('parent ')]
+          print('MIRA_DELIVERY_IDENTITY=' + json.dumps({
+              'repository': os.environ['GITHUB_REPOSITORY'], 'run_id': os.environ['GITHUB_RUN_ID'],
+              'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'event': os.environ['GITHUB_EVENT_NAME'],
+              'source': os.environ['MIRA_SOURCE'], 'base': os.environ['MIRA_BASE'], 'pr': os.environ['MIRA_PR'],
+              'checkout': git('rev-parse', 'HEAD'), 'parents': parents, 'tree': git('rev-parse', 'HEAD^{tree}')
+          }, sort_keys=True, separators=(',', ':')))
+          PY
+      - name: Test delivery automation
+        run: mise exec -- python -I -B -m unittest discover -s tests/engineering -p 'test_*.py'
       - name: Verify runner architecture
         run: |
           echo "Runner architecture: $(uname -m)"
@@ -70,6 +89,25 @@ jobs:
           version: 2026.11.2
           install: false
       - run: mise install --locked
+      - name: Record revision identity
+        env:
+          MIRA_SOURCE: ${{ github.event.pull_request.head.sha || github.sha }}
+          MIRA_BASE: ${{ github.event.pull_request.base.sha || '' }}
+          MIRA_PR: ${{ github.event.pull_request.number || '' }}
+        run: |
+          mise exec -- python -I -B - <<'PY'
+          import json, os, subprocess
+          git = lambda *args: subprocess.check_output(['git', *args], text=True).strip()
+          parents = [line.split()[1] for line in git('cat-file', '-p', 'HEAD').split('\n\n', 1)[0].splitlines() if line.startswith('parent ')]
+          print('MIRA_DELIVERY_IDENTITY=' + json.dumps({
+              'repository': os.environ['GITHUB_REPOSITORY'], 'run_id': os.environ['GITHUB_RUN_ID'],
+              'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'event': os.environ['GITHUB_EVENT_NAME'],
+              'source': os.environ['MIRA_SOURCE'], 'base': os.environ['MIRA_BASE'], 'pr': os.environ['MIRA_PR'],
+              'checkout': git('rev-parse', 'HEAD'), 'parents': parents, 'tree': git('rev-parse', 'HEAD^{tree}')
+          }, sort_keys=True, separators=(',', ':')))
+          PY
+      - name: Test delivery automation
+        run: mise exec -- python -I -B -m unittest discover -s tests/engineering -p 'test_*.py'
       - working-directory: apps/api
         run: uv sync --locked
       - working-directory: apps/api
@@ -87,6 +125,23 @@ jobs:
           version: 2026.11.2
           install: false
       - run: mise install --locked
+      - name: Record revision identity
+        env:
+          MIRA_SOURCE: ${{ github.event.pull_request.head.sha || github.sha }}
+          MIRA_BASE: ${{ github.event.pull_request.base.sha || '' }}
+          MIRA_PR: ${{ github.event.pull_request.number || '' }}
+        run: |
+          mise exec -- python -I -B - <<'PY'
+          import json, os, subprocess
+          git = lambda *args: subprocess.check_output(['git', *args], text=True).strip()
+          parents = [line.split()[1] for line in git('cat-file', '-p', 'HEAD').split('\n\n', 1)[0].splitlines() if line.startswith('parent ')]
+          print('MIRA_DELIVERY_IDENTITY=' + json.dumps({
+              'repository': os.environ['GITHUB_REPOSITORY'], 'run_id': os.environ['GITHUB_RUN_ID'],
+              'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'event': os.environ['GITHUB_EVENT_NAME'],
+              'source': os.environ['MIRA_SOURCE'], 'base': os.environ['MIRA_BASE'], 'pr': os.environ['MIRA_PR'],
+              'checkout': git('rev-parse', 'HEAD'), 'parents': parents, 'tree': git('rev-parse', 'HEAD^{tree}')
+          }, sort_keys=True, separators=(',', ':')))
+          PY
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck

@@ -126,14 +126,18 @@ These are engineering guardrails, not final business rules. Domain behavior must
 
 ## 11. Git collaboration
 
-- During the initial bootstrap, discovery and engineering-foundation phases, maintainers may commit directly to `main`.
-- Pull requests are not required in the current workflow.
+- Use short-lived feature/engineering branches and pull requests targeting `main`; direct commits to `main` are no longer the delivery policy.
+- Present the full patch, including new files, for human review. Publication requires explicit external maintainer approval naming the exact canonical manifest SHA-256. Supplying a digest is not independent proof of authorization; any content change invalidates approval.
+- The delivery tool verifies correspondence to external approval, not the identity or authenticity of that approval. The trusted operator must verify the human decision and use reviewed tooling from the approved baseline.
+- Bootstrap Engineering Automation through the existing manually approved publication process. Its own real publication command remains blocked until Gate B protections are active and effectively verified; there is no bootstrap bypass.
+- Require successful backend, frontend, Ubuntu x64 and macOS ARM64 toolchain jobs for the exact PR revision, followed by separate explicit merge approval naming its commit SHA. Use SHA-bound squash merge, without admin bypass, auto-merge or branch deletion flags.
+- Verify the squash parent/tree and new post-merge CI. Integration is not deployment or authorization for non-test migrations.
 - Keep commits small, atomic and descriptive.
 - Never force-push, rewrite shared history or delete `main`.
 - Before staging or publishing, inspect `git status`, staged diffs and file names.
 - Never stage or publish content from the ignored `private/` directory.
 - Human approval is required before decisions or changes affecting architecture, security, data, payments, privacy, infrastructure or production behavior.
-- Reassess branch protection and pull request workflows when the team and delivery process mature.
+- GitHub enforcement changes require separate Gate B authorization. Policy requirements do not imply that remote protections are already active. See `docs/engineering/delivery-automation.md`.
 
 ## 12. Project status
 
