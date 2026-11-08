@@ -10,5 +10,6 @@
 | [ADR-016](adr/ADR-016-catalog-pricing-foundation.md) | Internal Catalog pricing foundation | Accepted | 2026-11-07 |
 | [ADR-017](adr/ADR-017-catalog-commercial-measurement.md) | Catalog commercial units and measurement specification | Accepted | 2026-11-07 |
 | [ADR-018](adr/ADR-018-reviewed-delivery-automation.md) | Reviewed delivery automation and SHA-bound integration | Accepted | 2026-11-08 |
+| [ADR-019](adr/ADR-019-inventory-stock-movements.md) | Inventory accounting and stock movements | Accepted | 2026-11-08 |
 
 See `adr/ADR-TEMPLATE.md` for the required format.

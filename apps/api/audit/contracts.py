@@ -18,3 +18,8 @@ class CatalogPriceAuditAction(Enum):
 
 class CatalogMeasurementAuditAction(Enum):
     SPEC_CHANGED = "catalog.variant_measurement_spec_changed"
+
+
+class InventoryMovementAuditAction(Enum):
+    STOCK_RECEIVED = "inventory.stock_received"
+    STOCK_ADJUSTED = "inventory.stock_adjusted"

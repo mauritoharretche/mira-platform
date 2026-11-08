@@ -45,6 +45,7 @@ class CatalogModuleBoundaryTests(SimpleTestCase):
             "record_product_category_changed", "record_product_active_changed",
             "record_variant_price_set",
             "record_variant_measurement_spec_changed",
+            "record_inventory_movement",
         })
 
     def test_explicit_imports_respect_model_ownership_and_dependency_direction(self) -> None:
@@ -53,6 +54,7 @@ class CatalogModuleBoundaryTests(SimpleTestCase):
             "catalog": {"identity", "audit"},
             "audit": {"identity"},
             "identity": set(),
+            "inventory": {"catalog", "identity", "audit"},
         }
         violations = []
         for package in api_root.iterdir():

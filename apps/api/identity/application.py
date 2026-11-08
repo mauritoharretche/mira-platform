@@ -20,6 +20,10 @@ _REQUIRED_PERMISSIONS = {
     ),
     Capability.SET_VARIANT_MEASUREMENT_SPEC: ("catalog.set_variant_measurement_spec",),
     Capability.READ_VARIANT_MEASUREMENT_SPEC: ("catalog.view_variantmeasurementspec",),
+    Capability.RECEIVE_STOCK: ("inventory.receive_stock",),
+    Capability.ADJUST_STOCK: ("inventory.adjust_stock",),
+    Capability.READ_STOCK: ("inventory.view_stockposition",),
+    Capability.READ_STOCK_MOVEMENTS: ("inventory.view_stockmovement",),
 }
 
 
