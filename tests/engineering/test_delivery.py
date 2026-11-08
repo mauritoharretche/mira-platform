@@ -405,6 +405,68 @@ class DeliveryTests(unittest.TestCase):
             with mock.patch.object(self.gh, "effective", effective), self.assertRaises(d.Blocked):
                 d.verify_rules(self.gh)
 
+    def test_rules_accept_explicit_server_added_pull_request_parameters(self):
+        parameters = {
+            "allowed_merge_methods": ["squash"], "required_approving_review_count": 0,
+            "dismiss_stale_reviews_on_push": False, "require_code_owner_review": False,
+            "require_last_push_approval": False, "required_review_thread_resolution": True,
+            "required_reviewers": [], "require_extra_approval_for_unattributed_changes": True,
+        }
+        self.assertEqual(d.PR_PARAMETERS, parameters)
+        self.assertEqual(json.loads((SOURCE.parents[2] / d.POLICY_PATH).read_text()), d.POLICY)
+        for rules in (self.gh.policy["rules"], self.gh.effective):
+            next(rule for rule in rules if rule["type"] == "pull_request")["parameters"] = copy.deepcopy(parameters)
+        self.assertEqual(d.verify_rules(self.gh)["enforcement"], "verified")
+
+    def test_rules_reject_missing_changed_and_unknown_pull_request_parameters(self):
+        expected = copy.deepcopy(d.PR_PARAMETERS)
+        cases = [("missing " + key, {k: v for k, v in expected.items() if k != key}) for key in expected]
+        cases.extend([
+            ("nonempty reviewers", {**expected, "required_reviewers": [
+                {"reviewer": {"id": 1, "type": "Team"}, "file_patterns": ["*"], "minimum_approvals": 1}
+            ]}),
+            ("extra approval disabled", {**expected, "require_extra_approval_for_unattributed_changes": False}),
+            ("extra approval null", {**expected, "require_extra_approval_for_unattributed_changes": None}),
+            ("unexpected parameter", {**expected, "unexpected_parameter": True}),
+            ("broader merge methods", {**expected, "allowed_merge_methods": ["squash", "merge"]}),
+            ("unresolved threads allowed", {**expected, "required_review_thread_resolution": False}),
+        ])
+        for location in ("policy", "effective"):
+            for label, parameters in cases:
+                changed = copy.deepcopy(getattr(self.gh, location))
+                rules = changed["rules"] if location == "policy" else changed
+                next(rule for rule in rules if rule["type"] == "pull_request")["parameters"] = parameters
+                with self.subTest(location=location, case=label), mock.patch.object(self.gh, location, changed):
+                    with self.assertRaises(d.Blocked):
+                        d.verify_rules(self.gh)
+
+    def test_rules_reject_each_weakened_required_check(self):
+        expected = copy.deepcopy(d.CHECK_PARAMETERS)
+        cases = []
+        for index, check in enumerate(expected["required_status_checks"]):
+            for field, value in (("integration_id", None), ("integration_id", 999), ("context", "wrong")):
+                changed = copy.deepcopy(expected)
+                changed["required_status_checks"][index][field] = value
+                cases.append((check["context"] + " " + field + " " + str(value), changed))
+            changed = copy.deepcopy(expected)
+            changed["required_status_checks"].pop(index)
+            cases.append(("missing " + check["context"], changed))
+        cases.extend([
+            ("non-strict checks", {**expected, "strict_required_status_checks_policy": False}),
+            ("creation exemption", {**expected, "do_not_enforce_on_create": True}),
+            ("unexpected check", {**expected, "required_status_checks": expected["required_status_checks"] + [
+                {"context": "unexpected", "integration_id": d.APP_ID}
+            ]}),
+        ])
+        for location in ("policy", "effective"):
+            for label, parameters in cases:
+                changed = copy.deepcopy(getattr(self.gh, location))
+                rules = changed["rules"] if location == "policy" else changed
+                next(rule for rule in rules if rule["type"] == "required_status_checks")["parameters"] = parameters
+                with self.subTest(location=location, case=label), mock.patch.object(self.gh, location, changed):
+                    with self.assertRaises(d.Blocked):
+                        d.verify_rules(self.gh)
+
     def test_ci_requires_four_successful_correlated_jobs_and_checkout_evidence(self):
         head, base = "a" * 40, "b" * 40
         self.gh.base = base

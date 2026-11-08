@@ -155,6 +155,20 @@ no bypass and exact GitHub Actions integration ID 15368 for:
 - Toolchain (ubuntu-latest)
 - Toolchain (macos-15)
 
+GitHub returns two explicit pull-request parameters that the local policy also
+declares: `required_reviewers: []` and
+`require_extra_approval_for_unattributed_changes: true`. The empty reviewer list
+adds no reviewer/file-pattern requirements. GitHub's [REST rules
+documentation](https://docs.github.com/en/rest/repos/rules) specifies that the
+extra-approval flag requires another review for unattributed Copilot pull requests
+only when a nonzero approval count is required. It has no effect with this
+policy's `required_approving_review_count: 0`.
+
+Compare the complete configured and effective parameter maps exactly, including
+these two values. Missing, changed or additional unexpected parameters fail
+closed; do not filter unknown fields or normalize away server-added values.
+Further API schema changes require human review.
+
 Unknown/additional rules and API schema drift stop for review. Zero GitHub
 approving reviews reflects the solo-maintainer constraint; it does not enforce
 external human review against the owner. The owner must perform the explicit
