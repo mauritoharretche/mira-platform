@@ -11,7 +11,7 @@ Thank you for helping improve MIRA Platform. The project is in its discovery and
 
 ## Branches
 
-During the initial bootstrap, discovery and engineering-foundation phases, maintainers may commit atomically to `main` after explicit approval. Short-lived branches remain available when useful:
+Use a short-lived branch from clean, synchronized `main`, after scope approval:
 
 - `docs/<topic>`
 - `chore/<topic>`
@@ -19,11 +19,11 @@ During the initial bootstrap, discovery and engineering-foundation phases, maint
 - `fix/<topic>`
 - `test/<topic>`
 
-Pull requests are optional in the current workflow. Do not force-push or rewrite shared history.
+Pull requests targeting `main` are required by delivery policy. Do not commit directly to `main`, force-push or rewrite shared history. GitHub ruleset activation is a separate approval gate; do not assume this policy file activates enforcement.
 
 ## Pull requests
 
-When a pull request is used, it should include:
+Every pull request should include:
 
 - Problem and motivation.
 - Scope and explicit non-goals.
@@ -34,6 +34,10 @@ When a pull request is used, it should include:
 - Screenshots or recordings for user-facing changes, with no personal or sensitive data.
 
 Keep changes focused and reasonably small. Human approval remains required for architecture, security, data, payment, privacy and production-sensitive changes.
+
+Review the complete patch, including new files, before publication. Record explicit external maintainer approval naming the canonical manifest SHA-256; a command-line digest alone is not approval. Changed content needs new approval. After publication, require all four established CI jobs and separate approval of the exact PR head SHA before squash merge. Auto-merge remains disabled; preserve branches and verify post-merge CI.
+
+Engineering Automation itself must bootstrap through the existing manually approved workflow. Do not use its real publication path before Gate B protections are active and verified. See [Delivery automation](docs/engineering/delivery-automation.md) for manifests, trust boundaries and partial-failure handling.
 
 ## Commit messages
 

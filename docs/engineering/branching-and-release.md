@@ -2,12 +2,28 @@
 
 ## Branches
 
-- `main`: current engineering-foundation baseline. Maintainers may commit atomic, approved changes directly during this phase.
-- Short-lived branches: `feat/`, `fix/`, `docs/`, `chore/`, `test/`, `refactor/`, when useful.
+- `main`: reviewed integration baseline. Changes reach it through pull requests.
+- Use short-lived `feat/`, `fix/`, `docs/`, `chore/`, `test/` or `refactor/` branches from a verified clean, synchronized main commit.
 
 ## Pull requests
 
-Pull requests are optional during the current phase. Require explicit human approval for architecture, security, data, payments, privacy, infrastructure and production-sensitive changes; reassess mandatory PR protections when the delivery process matures.
+Review the entire patch, including new files, before explicit publication authorization. Engineering Automation binds that authorization to a canonical manifest SHA-256. Passing a digest does not authenticate an approver: an external, explicit maintainer decision naming it must exist and be verified by the trusted operator.
+
+Publish only the approved paths/content, with an atomic commit and non-force push. Require backend, frontend, Toolchain (ubuntu-latest) and Toolchain (macos-15) to complete successfully for the exact revision. Missing, pending, skipped, neutral, cancelled and failed jobs are not sufficient.
+
+Obtain separate merge approval for the exact PR head and current main SHA. Use squash only, with the expected head SHA. Do not use admin bypass, auto-merge, branch deletion flags, automatic branch updates, rebase or destructive resets. Preserve the feature branch. Verify the resulting commit's parent/tree and all four new post-merge CI results before declaring integration verified.
+
+## Bootstrap and activation
+
+Engineering Automation Gate A is implemented and tested locally on its own branch. Publish and merge its first PR through the existing manually approved process; do not use the tool to publish itself. ADR-018 acceptance and publication remain separate approvals.
+
+The tool's real publication operation is blocked until Gate B protections are active and read back through both configured and effective-rule APIs. No bootstrap bypass exists. The stored ruleset JSON is inert. Gate B requires specific settings authorization, effective check/source/strictness verification and a separately authorized harmless PR demonstrating actual pending/passing behavior. Keep native auto-merge disabled for v1.
+
+## Failures and data boundaries
+
+Stop on divergence, changed content, stale heads, conflicts, missing permissions, API errors or uncertain write outcomes. Preserve local/staged/remote evidence. Never automatically retry writes, clean the index, amend commits, rewrite history, delete branches or weaken protections to recover.
+
+Code integration does not apply schemas or authorize operational use. No delivery command runs non-test migrations, modifies development databases or volumes, deploys, or changes repository settings. See [Delivery automation](delivery-automation.md) for the operator procedure.
 
 ## Releases
 
