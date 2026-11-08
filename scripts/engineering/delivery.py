@@ -29,6 +29,7 @@ PR_PARAMETERS = {
     "allowed_merge_methods": ["squash"], "required_approving_review_count": 0,
     "dismiss_stale_reviews_on_push": False, "require_code_owner_review": False,
     "require_last_push_approval": False, "required_review_thread_resolution": True,
+    "required_reviewers": [], "require_extra_approval_for_unattributed_changes": True,
 }
 CHECK_PARAMETERS = {
     "strict_required_status_checks_policy": True, "do_not_enforce_on_create": False,
