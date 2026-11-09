@@ -92,7 +92,8 @@ assert connection.settings_dict["NAME"] == "mira"
 assert connection.settings_dict["TEST"]["NAME"] == "test_mira"
 assert connection.connection is None
 paths = ["auth/csrf", "auth/login", "auth/session", "auth/logout", "catalog/products", "catalog/products/invalid",
-         "inventory/variants/invalid/initial-receipt", "inventory/variants/invalid/stock", "inventory/variants/invalid/movements"]
+         "inventory/variants/invalid/initial-receipt", "inventory/variants/invalid/stock", "inventory/variants/invalid/movements",
+         "catalog/categories", "catalog/products/invalid/category", "catalog/products/invalid/active"]
 client = Client(enforce_csrf_checks=True, HTTP_HOST="localhost", HTTP_ORIGIN="http://localhost:3000")
 client.cookies[settings.SESSION_COOKIE_NAME] = "fictional-existing-session"
 with ExitStack() as stack:
@@ -100,7 +101,8 @@ with ExitStack() as stack:
               ["django.contrib.sessions.middleware.SessionMiddleware.process_request",
                "django.contrib.auth.middleware.AuthenticationMiddleware.process_request",
                "django.contrib.auth.forms.authenticate", "catalog.application.create_product_with_initial_variant",
-               "inventory.application.receive_stock"]]
+               "inventory.application.receive_stock", "catalog.application.list_products", "catalog.application.list_category_page",
+               "catalog.application.create_category", "catalog.application.set_product_category", "catalog.application.set_product_active"]]
     connect = stack.enter_context(patch.object(BaseDatabaseWrapper, "ensure_connection", side_effect=AssertionError("Unsafe connection forbidden")))
     for path in paths:
         for method in ("get", "post"):
@@ -117,7 +119,7 @@ print(json.dumps({"rejected_requests": len(paths) * 2, "connections_opened": 0, 
         process = subprocess.run([sys.executable, "-B", "-c", worker], cwd=settings.BASE_DIR, env=env,
                                  capture_output=True, text=True, timeout=20)
         self.assertEqual(process.returncode, 0, "Independent-process isolation regression failed")
-        self.assertEqual(json.loads(process.stdout), {"rejected_requests": 18, "connections_opened": 0, "session_auth_business_calls": 0})
+        self.assertEqual(json.loads(process.stdout), {"rejected_requests": 24, "connections_opened": 0, "session_auth_business_calls": 0})
 
     def test_operator_is_disabled_in_base_and_all_endpoints_fail_closed_when_disabled(self):
         fake = {"DJANGO_SECRET_KEY": "fictional-settings-check", "POSTGRES_DB": "mira", "POSTGRES_USER": "fictional", "POSTGRES_PASSWORD": "fictional-settings-check"}
@@ -128,7 +130,8 @@ print(json.dumps({"rejected_requests": len(paths) * 2, "connections_opened": 0, 
         self.assertTrue(base["CSRF_COOKIE_SECURE"])
         with override_settings(OPERATOR_HTTP_ENABLED=False):
             for path in ("auth/csrf", "auth/login", "auth/session", "auth/logout", "catalog/products", "catalog/products/invalid",
-                         "inventory/variants/invalid/stock", "inventory/variants/invalid/movements", "inventory/variants/invalid/initial-receipt"):
+                         "inventory/variants/invalid/stock", "inventory/variants/invalid/movements", "inventory/variants/invalid/initial-receipt",
+                         "catalog/categories", "catalog/products/invalid/category", "catalog/products/invalid/active"):
                 with self.subTest(path=path), self.assertNumQueries(0):
                     response = self.client.get(PREFIX + "/" + path, secure=True)
                     self.assertEqual(response.status_code, 404)
@@ -170,7 +173,7 @@ print(json.dumps({"rejected_requests": len(paths) * 2, "connections_opened": 0, 
         self.assertEqual(response.status_code, 400)
         response = self.client.post(PREFIX + "/catalog/products", "name=demo", content_type="application/x-www-form-urlencoded", secure=True, HTTP_X_CSRFTOKEN=token)
         self.assertEqual(response.status_code, 415)
-        for path in ("/admin/", PREFIX + "/catalog/categories", PREFIX + "/inventory/adjustments"):
+        for path in ("/admin/", PREFIX + "/catalog/prices", PREFIX + "/catalog/measurements", PREFIX + "/inventory/adjustments"):
             self.assertEqual(self.client.get(path, secure=True).status_code, 404)
 
     def test_session_storage_failure_is_generic_even_before_view_dispatch(self):

@@ -166,3 +166,15 @@ class OperatorAuthenticationTests(TestCase):
         self.assertFalse(self.user.is_staff)
         self.assertEqual(sign_in(self.client).status_code, 200)
         self.assertEqual(self.client.get(PREFIX + "/auth/session", secure=True).json()["capabilities"], [])
+
+
+class CatalogSurfaceCapabilityTests(TestCase):
+    def test_session_hints_preserve_granular_commercial_permissions_and_revocation(self):
+        assert_test_database(self)
+        user = make_operator(permissions=("catalog.view_category", "catalog.set_product_active"))
+        client = operator_client()
+        sign_in(client)
+        self.assertCountEqual(client.get(PREFIX + "/auth/session", secure=True).json()["capabilities"],
+                              ["catalog.list_categories", "catalog.set_product_active"])
+        user.user_permissions.clear()
+        self.assertEqual(client.get(PREFIX + "/auth/session", secure=True).json()["capabilities"], [])

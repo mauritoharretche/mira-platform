@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { OperationsShell } from "@/components/operations-shell";
@@ -17,9 +18,9 @@ export default function OperationsPage() {
   }
   return <OperationsShell>
     <div className="page-heading"><p className="eyebrow">Catálogo e inventario</p><h1>Prepará tu primera recepción</h1><p className="muted">Un recorrido simple para registrar identidad y existencia física.</p></div>
-    <div className="workspace-grid"><ProductCreateForm /><aside className="panel panel-subtle"><h2>Retomar un producto</h2><p>Si ya tenés su identificador, abrilo para consultar su stock.</p><form onSubmit={open}>
+    <p><Link href="/operations/catalog">Explorar catálogo y categorías</Link></p><div className="workspace-grid"><ProductCreateForm /><aside className="panel panel-subtle"><h2>Retomar un producto</h2><p>Si ya tenés su identificador, abrilo para consultar su stock.</p><form onSubmit={open}>
       <label htmlFor="product-id">UUID del producto</label><input id="product-id" name="product_id" required autoComplete="off" aria-describedby={error ? "lookup-error" : undefined} />
       {error && <p id="lookup-error" role="alert" className="field-error">{error}</p>}<button>Abrir producto</button>
-    </form><p className="caption">Esta primera versión abre productos por ID; no incluye búsqueda general.</p></aside></div>
+    </form><p className="caption">También podés encontrarlo desde el catálogo por categoría.</p></aside></div>
   </OperationsShell>;
 }

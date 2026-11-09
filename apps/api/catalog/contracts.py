@@ -40,3 +40,35 @@ class VariantMeasurementSpecSnapshot:
     net_content_unit: MeasurementUnit | None
     created_at: datetime
     updated_at: datetime
+
+
+@dataclass(frozen=True)
+class ProductSummary:
+    id: UUID
+    name: str
+    category_id: UUID | None
+    is_active: bool
+
+
+@dataclass(frozen=True)
+class ProductPage:
+    items: tuple[ProductSummary, ...]
+    next_after_id: UUID | None
+
+
+@dataclass(frozen=True)
+class CategorySummary:
+    id: UUID
+    name: str
+
+
+@dataclass(frozen=True)
+class CategoryCursor:
+    name_key: str
+    id: UUID
+
+
+@dataclass(frozen=True)
+class CategoryPage:
+    items: tuple[CategorySummary, ...]
+    next_cursor: CategoryCursor | None

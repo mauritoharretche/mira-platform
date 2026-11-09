@@ -2,7 +2,25 @@ export const API = "/api/v1/operator";
 export const MAX_INTEGER = "9223372036854775807";
 
 export type Session = { authenticated: boolean; capabilities: string[] };
-export type Product = { id: string; name: string; is_active: boolean; variants: { id: string; label: string; sku: string; barcode: string | null }[] };
+export type ProductSummary = { id: string; name: string; category_id: string | null; is_active: boolean };
+export type Product = ProductSummary & { variants: { id: string; label: string; sku: string; barcode: string | null }[] };
+export type Category = { id: string; name: string };
+export type ProductPage = { products: ProductSummary[]; next_cursor: string | null };
+export type CategoryPage = { categories: Category[]; next_cursor: string | null };
+
+// One owner per read stream. Invalidate synchronously when its selection changes.
+export class ReadGeneration {
+  private current = 0;
+  begin() { return ++this.current; }
+  accepts(token: number) { return token === this.current; }
+  invalidate() { this.current += 1; }
+}
+
+export function catalogQuery(category: string, after: string | null = null) {
+  const query = new URLSearchParams({ category });
+  if (after !== null) query.set("after", after);
+  return `/catalog/products?${query}`;
+}
 export type Stock = { position_id: string; variant_id: string; unit: "EACH"; on_hand: string; version: string; created_at: string; updated_at: string };
 export type Movement = { movement_id: string; sequence: string; kind: "RECEIPT" | "ADJUSTMENT"; unit: "EACH"; quantity_before: string; delta: string; quantity_after: string; reason: string | null; recorded_at: string };
 export type History = { movements: Movement[]; next_cursor: string | null };
@@ -33,6 +51,7 @@ export function messageFor(error: unknown): string {
     access_denied: "Tu cuenta no tiene permiso para esta operación.",
     csrf_failed: "La verificación de seguridad venció. Recargá la página antes de continuar.",
     identifier_conflict: "El SKU o código de barras ya está registrado. La creación no se realizó.",
+    category_conflict: "Ya existe una categoría con ese nombre. Consultá las categorías antes de continuar.",
     stock_conflict: "El stock ya fue inicializado. Consultá el saldo y los movimientos antes de continuar.",
     not_found: "No encontramos el registro solicitado o el entorno operativo no está habilitado.",
     validation_error: "Revisá los datos indicados antes de continuar.",

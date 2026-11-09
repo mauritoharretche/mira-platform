@@ -1,7 +1,7 @@
 import { OperationsShell } from "@/components/operations-shell";
-import { StockPanel } from "@/components/stock-panel";
+import { ProductWorkspace } from "@/components/product-workspace";
 
 export default async function ProductPage({ params }: { params: Promise<{ productId: string }> }) {
   const { productId } = await params;
-  return <OperationsShell><StockPanel key={productId} productId={productId} /></OperationsShell>;
+  return <OperationsShell><ProductWorkspace key={productId} productId={productId} /></OperationsShell>;
 }

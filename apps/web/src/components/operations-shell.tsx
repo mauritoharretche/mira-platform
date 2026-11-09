@@ -52,7 +52,7 @@ export function OperationsShell({ children }: { children: React.ReactNode }) {
       <a className="skip-link" href="#workspace">Ir al contenido</a>
       <header className="operator-header">
         <Link className="brand" href="/operations">MIRA<span>Operaciones</span></Link>
-        <nav aria-label="Navegación principal"><Link href="/operations">Nuevo producto</Link><button className="button-quiet" onClick={() => void logout()} disabled={leaving}>Cerrar sesión</button></nav>
+        <nav aria-label="Navegación principal"><Link href="/operations/catalog">Catálogo</Link><Link href="/operations">Nuevo producto</Link><button className="button-quiet" onClick={() => void logout()} disabled={leaving}>Cerrar sesión</button></nav>
       </header>
       <main id="workspace" className="operator-page">{children}</main>
       <footer className="operator-footer">Entorno de demostración local · Datos ficticios</footer>
