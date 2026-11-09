@@ -114,6 +114,16 @@ jobs:
         run: uv run python manage.py check --settings=config.settings.test
       - working-directory: apps/api
         run: uv run python manage.py test --keepdb --settings=config.settings.test
+      - name: Install locked browser-test dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install isolated Chromium test runtime
+        working-directory: apps/web
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Verify the real operator browser workflow
+        working-directory: apps/api
+        env:
+          MIRA_RUN_BROWSER_TESTS: "1"
+        run: uv run python manage.py test system.tests.test_browser_workflow --keepdb --noinput --settings=config.settings.test
 
   frontend:
     runs-on: ubuntu-latest

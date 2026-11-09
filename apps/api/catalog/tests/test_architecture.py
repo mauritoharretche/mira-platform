@@ -51,10 +51,11 @@ class CatalogModuleBoundaryTests(SimpleTestCase):
     def test_explicit_imports_respect_model_ownership_and_dependency_direction(self) -> None:
         api_root = Path(__file__).resolve().parents[2]
         allowed_dependencies = {
-            "catalog": {"identity", "audit"},
+            "catalog": {"identity", "audit", "system"},
             "audit": {"identity"},
-            "identity": set(),
-            "inventory": {"catalog", "identity", "audit"},
+            "identity": {"system"},
+            "inventory": {"catalog", "identity", "audit", "system"},
+            "system": set(),
         }
         violations = []
         for package in api_root.iterdir():
@@ -88,6 +89,8 @@ class CatalogModuleBoundaryTests(SimpleTestCase):
                             owner in allowed_dependencies
                             and dependency not in allowed_dependencies[owner]
                         )
+                        if dependency == "system" and owner in {"identity", "catalog", "inventory"} and source.name != "http.py":
+                            violations.append(f"{relative}:{node.lineno}: transport import outside adapter")
                         if imports_model or wrong_direction:
                             violations.append(f"{relative}:{node.lineno}: {imported}")
 
