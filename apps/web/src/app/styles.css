@@ -84,3 +84,23 @@ th { font-size: .75rem; color: #526253; background: #f6f7f2; }
   table td { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); gap: .6rem; border: 0; padding: .25rem 0; }
   table td::before { content: attr(data-label); font-weight: 600; color: #526253; }
 }
+
+/* Operational catalog: reuse the existing typography, panels and focus rules. */
+.catalog-layout { display: grid; grid-template-columns: minmax(15rem, .8fr) minmax(0, 2fr); gap: 1.5rem; align-items: start; }
+.section-heading { display: flex; justify-content: space-between; align-items: start; flex-wrap: wrap; gap: .8rem; margin-bottom: 1rem; }
+.section-heading h2 { margin-bottom: 0; }
+.catalog-list { list-style: none; padding: 0; margin: 0; }
+.catalog-list li { padding: 1.1rem 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.catalog-list li > a { display: block; font-weight: 650; margin-bottom: .6rem; font-size: 1.1rem; }
+.catalog-pagination { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 1.4rem; }
+.category-create { margin-top: 2rem; border-top: 1px solid var(--border); padding-top: 1.5rem; }
+.classification-panel { margin-bottom: 1.5rem; }
+.classification-panel h3 { margin-top: 0; font-size: 1rem; }
+@media (max-width: 47.999rem) {
+  .catalog-layout { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+  .catalog-pagination button { width: 100%; }
+}
+
+.category-navigation { padding: 0; list-style: none; margin: .8rem 0; max-height: 15rem; overflow-y: auto; }
+.category-navigation li { margin-bottom: .2rem; overflow-wrap: anywhere; }
+.category-navigation button { width: 100%; text-align: left; overflow-wrap: anywhere; }

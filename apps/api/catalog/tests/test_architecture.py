@@ -23,6 +23,7 @@ class CatalogModuleBoundaryTests(SimpleTestCase):
                 "create_category", "list_categories", "set_product_category", "set_product_active",
                 "set_variant_price", "get_current_variant_price", "list_variant_price_history",
                 "set_variant_measurement_spec", "get_variant_measurement_spec",
+                "list_products", "list_category_page",
             },
         )
         for name, operation in operations.items():

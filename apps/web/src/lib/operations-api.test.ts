@@ -33,3 +33,46 @@ describe("operator transport", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("catalog read ownership", () => {
+  it("discards an older filter response even if its fetch ignores abort", async () => {
+    const { ReadGeneration } = await import("./operations-api");
+    const reads = new ReadGeneration();
+    let resolveOld!: (value: string) => void;
+    const oldResult = new Promise<string>((resolve) => { resolveOld = resolve; });
+    const oldToken = reads.begin();
+    let visible = "";
+    const oldRead = oldResult.then((result) => { if (reads.accepts(oldToken)) visible = result; });
+    reads.invalidate(); // synchronous filter change, before the next effect
+    const newToken = reads.begin();
+    if (reads.accepts(newToken)) visible = "new category";
+    resolveOld("old category");
+    await oldRead;
+    expect(visible).toBe("new category");
+  });
+  it("invalidates in-flight product reads after writes and unmount", async () => {
+    const { ReadGeneration } = await import("./operations-api");
+    const reads = new ReadGeneration();
+    const beforeWrite = reads.begin();
+    reads.invalidate();
+    expect(reads.accepts(beforeWrite)).toBe(false);
+    const afterWrite = reads.begin();
+    reads.invalidate();
+    expect(reads.accepts(afterWrite)).toBe(false);
+  });
+  it("resets pagination by constructing a fresh filter query", async () => {
+    const { catalogQuery } = await import("./operations-api");
+    expect(catalogQuery("uncategorized", "old-cursor")).toContain("after=old-cursor");
+    expect(catalogQuery("all")).toBe("/catalog/products?category=all");
+    expect(catalogQuery("a&after=spoofed")).toBe("/catalog/products?category=a%26after%3Dspoofed");
+  });
+  it("category write uncertainty and duplicate errors do not authorize replay", async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ error: { code: "category_conflict" } }, { status: 409 }));
+    await expect(request("/catalog/categories", { method: "POST" }, fetcher)).rejects.toMatchObject({ code: "category_conflict", uncertain: false });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(messageFor(new OperatorError("category_conflict"))).toContain("Ya existe");
+    const failed = vi.fn().mockRejectedValue(new TypeError("network"));
+    await expect(request("/catalog/products/id/category", { method: "POST" }, failed)).rejects.toMatchObject({ uncertain: true });
+    expect(failed).toHaveBeenCalledTimes(1);
+  });
+});

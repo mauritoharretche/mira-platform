@@ -21,6 +21,8 @@ from .login_throttle import LoginThrottled, reserve_login_attempt
 _SURFACE_CAPABILITIES = (
     Capability.CREATE_PRODUCT_WITH_INITIAL_VARIANT, Capability.READ_PRODUCT,
     Capability.RECEIVE_STOCK, Capability.READ_STOCK, Capability.READ_STOCK_MOVEMENTS,
+    Capability.CREATE_CATEGORY, Capability.LIST_CATEGORIES,
+    Capability.SET_PRODUCT_CATEGORY, Capability.SET_PRODUCT_ACTIVE,
 )
 
 

@@ -6,10 +6,9 @@ import { useOperator } from "./operations-shell";
 
 type Observation = { variantId: string; stock: Stock | null | undefined; history: History | null; consistent: boolean };
 
-export function StockPanel({ productId }: { productId: string }) {
+export function StockPanel({ product }: { product: Product }) {
   const session = useOperator();
-  const [product, setProduct] = useState<Product | null>(null);
-  const [variantId, setVariantId] = useState("");
+  const [variantId, setVariantId] = useState(product.variants[0]?.id ?? "");
   const [observation, setObservation] = useState<Observation | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -24,15 +23,6 @@ export function StockPanel({ productId }: { productId: string }) {
   const canStock = session.capabilities.includes("inventory.read_stock");
   const canHistory = session.capabilities.includes("inventory.read_stock_movements");
   const canReceive = session.capabilities.includes("inventory.receive_stock");
-
-  useEffect(() => {
-    if (!canReadProduct) return;
-    const controller = new AbortController();
-    request<Product>(`/catalog/products/${encodeURIComponent(productId)}`, { signal: controller.signal }).then((result) => {
-      if (!controller.signal.aborted) { setProduct(result); setVariantId(result.variants[0]?.id ?? ""); }
-    }).catch((failure) => { if (!controller.signal.aborted) setError(messageFor(failure)); });
-    return () => controller.abort();
-  }, [productId, canReadProduct]);
 
   const load = useCallback(async (id: string, signal?: AbortSignal) => {
     const current = ++generation.current;
@@ -90,7 +80,6 @@ export function StockPanel({ productId }: { productId: string }) {
   const variant = product?.variants.find((item) => item.id === variantId);
   if (!canReadProduct) return <section className="panel"><h1>Acceso restringido</h1><p role="alert">Tu cuenta no tiene permiso para consultar productos.</p></section>;
   return <>
-    <div className="page-heading"><p className="eyebrow">Producto y recepción</p><h1>{product?.name ?? "Consultando producto…"}</h1><p className="identifier">ID: {productId}</p></div>
     {error && <p className="error-box" role="alert" tabIndex={-1} ref={errorRef}>{error}</p>}
     {notice && <p className="success-box" role="status">{notice}</p>}
     {product && <>

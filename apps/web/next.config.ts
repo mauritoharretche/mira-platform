@@ -4,6 +4,7 @@ import type { NextConfig } from "next";
 const endpoints = [
   "auth/csrf", "auth/login", "auth/session", "auth/logout",
   "catalog/products", "catalog/products/:productId",
+  "catalog/categories", "catalog/products/:productId/category", "catalog/products/:productId/active",
   "inventory/variants/:variantId/initial-receipt",
   "inventory/variants/:variantId/stock", "inventory/variants/:variantId/movements",
 ];

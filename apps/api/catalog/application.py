@@ -3,6 +3,7 @@ from unicodedata import normalize
 from uuid import UUID
 
 from django.db import transaction
+from django.db.models import Q
 
 from audit import application as audit_application
 from audit.contracts import CatalogAuditAction
@@ -10,6 +11,7 @@ from identity import application as identity_application
 from identity.contracts import Capability
 
 from .contracts import MeasurementUnit, PriceBasis, PriceSnapshot, VariantMeasurementSpecSnapshot
+from .contracts import CategoryCursor, CategoryPage, CategorySummary, ProductPage, ProductSummary
 from .models import Category, Product, Variant, VariantMeasurementSpec, VariantPriceRevision
 
 
@@ -162,6 +164,52 @@ def list_categories(*, principal: object) -> list[Category]:
         principal=principal, capability=Capability.LIST_CATEGORIES
     )
     return list(Category.objects.order_by("name_key", "id"))
+
+
+def list_products(
+    *, principal: object, category_id: UUID | None = None,
+    only_uncategorized: bool = False, after_id: UUID | None = None,
+) -> ProductPage:
+    """Bounded administrative navigation; a cursor never grants authority."""
+    identity_application.require_capability(principal=principal, capability=Capability.READ_PRODUCT)
+    if (type(only_uncategorized) is not bool
+            or (category_id is not None and not isinstance(category_id, UUID))
+            or (after_id is not None and not isinstance(after_id, UUID))
+            or (only_uncategorized and category_id is not None)):
+        raise CatalogValidationError("invalid catalog filters or cursor")
+    query = Product.objects.order_by("id")
+    if category_id is not None:
+        query = query.filter(category_id=category_id)
+    elif only_uncategorized:
+        query = query.filter(category__isnull=True)
+    if after_id is not None:
+        query = query.filter(id__gt=after_id)
+    rows = list(query.values("id", "name", "category_id", "is_active")[:51])
+    return ProductPage(
+        items=tuple(ProductSummary(**row) for row in rows[:50]),
+        next_after_id=rows[49]["id"] if len(rows) > 50 else None,
+    )
+
+
+def list_category_page(*, principal: object, after: CategoryCursor | None = None) -> CategoryPage:
+    """Keep the old internal list contract intact; this query is bounded in SQL."""
+    identity_application.require_capability(principal=principal, capability=Capability.LIST_CATEGORIES)
+    if after is not None and (
+        not isinstance(after, CategoryCursor) or not isinstance(after.id, UUID)
+        or not isinstance(after.name_key, str) or not 1 <= len(after.name_key) <= 255
+        or normalize("NFC", after.name_key.casefold()) != after.name_key
+        or not after.name_key.strip() or after.name_key != after.name_key.strip()
+        or "\x00" in after.name_key or any(0xD800 <= ord(char) <= 0xDFFF for char in after.name_key)
+    ):
+        raise CatalogValidationError("invalid category cursor")
+    query = Category.objects.order_by("name_key", "id")
+    if after is not None:
+        query = query.filter(Q(name_key__gt=after.name_key) | Q(name_key=after.name_key, id__gt=after.id))
+    rows = list(query.values("id", "name", "name_key")[:51])
+    return CategoryPage(
+        items=tuple(CategorySummary(id=row["id"], name=row["name"]) for row in rows[:50]),
+        next_cursor=CategoryCursor(name_key=rows[49]["name_key"], id=rows[49]["id"]) if len(rows) > 50 else None,
+    )
 
 
 def set_product_category(
