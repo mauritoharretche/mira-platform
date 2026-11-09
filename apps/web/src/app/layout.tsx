@@ -4,12 +4,12 @@ import "./styles.css";
 
 export const metadata: Metadata = {
   title: "MIRA Platform",
-  description: "Technical foundation status",
+  description: "MIRA · Operaciones internas",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    <html lang="es-AR">
       <body>{children}</body>
     </html>
   );

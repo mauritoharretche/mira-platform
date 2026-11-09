@@ -1,18 +1,86 @@
 :root {
   color-scheme: light;
-  font-family: system-ui, sans-serif;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  color: #24372e;
+  background: #f4f5ef;
+  --accent: #24583e;
+  --border: #d7dfd4;
 }
 
-body {
-  margin: 0;
-}
-
-main {
-  margin: 0 auto;
-  max-width: 48rem;
-  padding: 4rem 1.5rem;
-}
-
-button {
-  font: inherit;
+* { box-sizing: border-box; }
+body { margin: 0; line-height: 1.55; }
+main { margin: 0 auto; max-width: 72rem; padding: 3rem 1.5rem; }
+h1, h2, p { margin-top: 0; }
+h1 { font-size: clamp(1.75rem, 4vw, 2.6rem); line-height: 1.18; letter-spacing: -.035em; font-weight: 650; margin-bottom: 1rem; }
+h2 { font-size: 1.25rem; line-height: 1.3; letter-spacing: -.015em; }
+a { color: var(--accent); text-underline-offset: .2em; }
+button, input, select { font: inherit; }
+button, .entry-link { border: 1px solid var(--border); border-radius: .6rem; padding: .7rem 1.1rem; min-height: 2.75rem; background: #fff; color: #24372e; font-weight: 600; cursor: pointer; }
+button:hover:not(:disabled) { background: #eef2e9; border-color: #7b9582; }
+button:disabled, fieldset:disabled { cursor: not-allowed; opacity: .65; }
+.button-primary { background: var(--accent); color: white; border-color: var(--accent); }
+button.button-primary:hover:not(:disabled) { background: #193f2b; }
+.entry-link { display: inline-block; text-decoration: none; }
+.button-quiet { background: transparent; }
+:focus-visible { outline: 3px solid #b16a17; outline-offset: 3px; }
+form { display: grid; gap: .55rem; }
+form button { margin-top: .65rem; justify-self: start; }
+label { font-weight: 600; font-size: .9rem; }
+input, select { width: 100%; min-width: 0; border: 1px solid #a7b5a6; border-radius: .5rem; background: #fff; padding: .7rem .8rem; min-height: 2.75rem; color: inherit; }
+input[aria-invalid=true] { border-color: #a43027; }
+fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.field { margin-bottom: 1.15rem; }
+.field label { display: block; margin-bottom: .4rem; }
+.muted { color: #506052; }
+.caption { color: #526154; font-size: .82rem; margin-top: .7rem; }
+.eyebrow { color: #47674e; text-transform: uppercase; letter-spacing: .13em; font-size: .75rem; font-weight: 700; margin-bottom: .8rem; }
+.operator-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; background: #fff; border-bottom: 1px solid var(--border); padding: 1rem max(1.5rem, calc((100vw - 69rem) / 2)); }
+.brand { display: flex; align-items: center; gap: .85rem; font-size: 1.6rem; font-weight: 750; letter-spacing: .06em; text-decoration: none; }
+.brand span { border-left: 1px solid var(--border); padding-left: .85rem; color: #59655a; font-size: .85rem; font-weight: 500; letter-spacing: 0; }
+nav { display: flex; align-items: center; gap: 1.25rem; font-size: .9rem; }
+.operator-page { min-height: calc(100vh - 10rem); }
+.page-heading { margin-bottom: 2rem; }
+.workspace-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 1.5rem; align-items: start; }
+.panel { min-width: 0; padding: 1.7rem; border: 1px solid var(--border); border-radius: 1rem; background: #fff; box-shadow: 0 2px 8px #25352504; }
+.panel-subtle { background: #edf1e7; }
+.identity-panel { display: grid; grid-template-columns: 1fr 1.3fr; align-items: start; gap: 2rem; margin-bottom: 1.5rem; }
+.badge { display: inline-block; padding: .3rem .7rem; background: #eff1e8; border-radius: 2rem; font-size: .8rem; font-weight: 600; }
+.identifier { color: #57645a; font-size: .82rem; overflow-wrap: anywhere; margin-top: .5rem; }
+.notice, .error-box, .success-box { padding: 1rem 1.2rem; border-radius: .6rem; border: 1px solid; overflow-wrap: anywhere; }
+.notice { background: #fff9e8; border-color: #dac690; color: #614b12; }
+.error-box { background: #fff0ed; border-color: #d69a91; color: #872b24; }
+.success-box { background: #eaf5eb; border-color: #9cc7a4; color: #234c2d; }
+.field-error { color: #8d3027; font-size: .85rem; margin-top: .4rem; }
+.stock-count { font-variant-numeric: tabular-nums; font-size: clamp(1.25rem, 3vw, 2.5rem); font-weight: 650; overflow-wrap: anywhere; margin: .5rem 0; }
+.stock-count span { font-size: 1rem; color: #59675b; }
+.empty-state { padding: .8rem 0; color: #566756; font-weight: 600; }
+.movement-panel { margin-top: 1.5rem; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: .85rem; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: .85rem .6rem; border-bottom: 1px solid #e5e9e0; vertical-align: top; overflow-wrap: anywhere; }
+th { font-size: .75rem; color: #526253; background: #f6f7f2; }
+.operator-footer { text-align: center; color: #58665a; font-size: .78rem; padding: 1.5rem; }
+.login-page { min-height: 100vh; display: grid; place-items: center; padding: 2rem 1rem; }
+.login-card { width: 100%; max-width: 30rem; padding: 2.5rem; border: 1px solid var(--border); border-radius: 1.2rem; background: #fff; }
+.login-card form { margin-top: 1.5rem; }
+.login-card label:not(:first-child) { margin-top: .7rem; }
+.login-card button { width: 100%; margin-top: 1rem; }
+.skip-link { position: absolute; left: -10000px; }
+.skip-link:focus { left: 1rem; top: 1rem; padding: .75rem; background: white; z-index: 10; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (max-width: 47.999rem) {
+  main { padding: 2rem 1rem; }
+  .operator-header { padding: .9rem 1rem; align-items: start; }
+  .brand { display: block; font-size: 1.35rem; }
+  .brand span { display: block; border: 0; padding: 0; font-size: .75rem; }
+  nav { gap: .6rem; flex-wrap: wrap; justify-content: end; }
+  nav a { padding: .5rem 0; }
+  .workspace-grid, .identity-panel { grid-template-columns: 1fr; gap: 1rem; }
+  .panel { padding: 1.2rem; }
+  .login-card { padding: 1.7rem; }
+  table thead { position: absolute; clip-path: inset(50%); width: 1px; height: 1px; overflow: hidden; }
+  table tbody, table tr { display: block; }
+  table tr { padding: .6rem 0; border-bottom: 1px solid var(--border); }
+  table td { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); gap: .6rem; border: 0; padding: .25rem 0; }
+  table td::before { content: attr(data-label); font-weight: 600; color: #526253; }
 }

@@ -8,7 +8,7 @@ from django.urls import URLResolver, get_resolver, resolve
 
 
 class IdentitySurfaceTests(SimpleTestCase):
-    def test_only_existing_health_routes_are_exposed(self) -> None:
+    def test_only_health_and_approved_operator_routes_are_exposed(self) -> None:
         def leaf_routes(resolver, prefix=""):
             routes = []
             for pattern in resolver.url_patterns:
@@ -21,7 +21,13 @@ class IdentitySurfaceTests(SimpleTestCase):
 
         self.assertCountEqual(
             leaf_routes(get_resolver()),
-            ["api/v1/health/live/", "api/v1/health/ready/"],
+            ["api/v1/health/live/", "api/v1/health/ready/",
+             "api/v1/operator/auth/csrf", "api/v1/operator/auth/login",
+             "api/v1/operator/auth/session", "api/v1/operator/auth/logout",
+             "api/v1/operator/catalog/products", "api/v1/operator/catalog/products/<str:product_id>",
+             "api/v1/operator/inventory/variants/<str:variant_id>/initial-receipt",
+             "api/v1/operator/inventory/variants/<str:variant_id>/stock",
+             "api/v1/operator/inventory/variants/<str:variant_id>/movements"],
         )
         self.assertEqual(resolve("/api/v1/health/live/").url_name, "health-live")
         self.assertEqual(resolve("/api/v1/health/ready/").url_name, "health-ready")
@@ -33,10 +39,10 @@ class IdentitySurfaceTests(SimpleTestCase):
             settings.AUTHENTICATION_BACKENDS, ["django.contrib.auth.backends.ModelBackend"]
         )
 
-    def test_identity_has_no_models_or_migrations(self) -> None:
-        self.assertEqual(list(apps.get_app_config("identity").get_models()), [])
+    def test_identity_owns_only_the_approved_abuse_budget_not_a_user_model(self) -> None:
+        self.assertEqual([model.__name__ for model in apps.get_app_config("identity").get_models()], ["LoginAttemptWindow"])
         migrations = MigrationLoader(None).disk_migrations
-        self.assertFalse(any(app_label == "identity" for app_label, name in migrations))
+        self.assertEqual([name for app_label, name in migrations if app_label == "identity"], ["0001_login_attempt_window"])
 
 
 class IdentityDatabaseIsolationTests(TestCase):

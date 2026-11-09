@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 type Status = "loading" | "healthy" | "unavailable";
@@ -32,6 +33,7 @@ export default function HomePage() {
   return (
     <main>
       <h1>MIRA Platform</h1>
+      <p><Link className="button-primary entry-link" href="/login">Ingresar a operaciones</Link></p>
       <p aria-live="polite">
         {status === "loading" && "Checking API readiness…"}
         {status === "healthy" && "API readiness confirmed."}

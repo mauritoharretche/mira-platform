@@ -4,6 +4,8 @@
 
 El entorno local inicial de MIRA contiene únicamente PostgreSQL 18.6 para la primera vertical slice. No incluye Django, Next.js, Celery, Redis, pagos, servicios cloud ni datos reales.
 
+La configuración Compose sigue conteniendo sólo PostgreSQL. La aplicación Django/Next dispone además de una demostración operativa aislada: consulte [Local operator workflow](operator-workflow.md). Sus rutas están deshabilitadas por defecto y su harness usa exclusivamente el runner nativo y `test_mira`. No habilite operaciones contra `mira` ni aplique migraciones pendientes sin autorización separada. Next no recibe las variables ni credenciales del `.env` raíz.
+
 La configuración usa la imagen oficial `postgres:18.6`, con soporte multi-arquitectura incluido ARM64 para Apple Silicon. PostgreSQL se publica sólo en `127.0.0.1`; no queda expuesto en interfaces de red externas. El servicio usa una red bridge privada y acotada al proyecto Compose, no una red externa compartida. El volumen se monta en `/var/lib/postgresql`, que es la ruta correcta para PostgreSQL 18.
 
 ## Requisitos
