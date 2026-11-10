@@ -22,6 +22,29 @@ disabled defaults remain 404. Native-runner current_database() verification is
 still required. Starting an independent process with config.settings.test leaves
 its default NAME unchanged and therefore cannot bypass the fence.
 
+## UX-01 Retail Calm: current workspace entry
+
+The current fictional operator login lands at /operations/catalog. The MIRA
+brand returns there. Compact navigation exposes only Catálogo and Nuevo producto;
+aria-current identifies the current page, or the Catalog area while reading a
+product. /operations remains the creation route; product creation still opens
+its existing detail route. Its fields, permissions, CSRF, result uncertainty and
+independent stock-receipt transaction are unchanged.
+
+The shared light workspace uses the existing MIRA green, system fonts, native
+controls and visible keyboard focus. There are no added dependencies, fonts,
+search, aggregate metrics, commercial fields or unavailable destinations. The
+UUID lookup remains secondary on the creation page. Logout remains the original
+POST flow, including uncertain-logout feedback; demo/fictional-data indicators
+remain visible. Client capabilities are presentation hints, never server grants.
+
+The following Phase 1.13 journey/API description is historical to that increment;
+current catalog navigation, categories and administrative activation are described
+in operator-catalog.md. Known documentation debt is retained explicitly: the
+opening ADR-020 Proposed reference above is outdated; Accepted in the Architecture
+Decision Log is authoritative. UX-01 does not silently rewrite that historical
+reference or authorize real operational exposure.
+
 ## Browser journey
 
 Use /login, /operations and /operations/products/{UUID}. Create the product and
@@ -164,3 +187,20 @@ human approval; merge is separately SHA-authorized after four successful checks.
 Integration does not authorize use of mira, deployment or real operator creation.
 Disable the surface on failure and favor reviewed forward fixes. Preserve every
 business movement and Audit record; no destructive recovery is implicit.
+
+## UX-01 visual verification
+
+Run the existing native browser harness serially on its verified test_mira target.
+No manual interactive session or standalone next dev/server is part of UX-01.
+The same real fictional fixtures are used for before/after screenshots. Login
+screenshots must be taken only while both credential fields are empty; never
+reproduce historical captures with filled credentials. Traces and videos remain
+disabled. Artifacts and canonical review material stay outside the checkout.
+
+Retain all prior browser security, receipt, revocation, expiry, cursor, lost-response
+and Audit-persistence assertions. Frontend-only scripted GET responses additionally
+exercise long names, fifty categories, partial capabilities, loading, empty and
+error/recovery states; they are not evidence of new backend functionality or
+permission grants. Measure page reflow at 320, 390, 768, 1024, 1280 and 1440 pixels,
+keyboard focus and contrast from rendered colors. Neither automated coverage nor
+screenshots constitute a full WCAG conformance audit or human usability approval.

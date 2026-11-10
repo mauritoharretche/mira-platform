@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { createContext, useContext, useEffect, useState } from "react";
 import { clearOperatorState, messageFor, request, Session, signOut } from "@/lib/operations-api";
 
@@ -15,6 +15,7 @@ export function useOperator() {
 
 export function OperationsShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [session, setSession] = useState<Session | null>(null);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
@@ -51,10 +52,17 @@ export function OperationsShell({ children }: { children: React.ReactNode }) {
     <div className="operator-app">
       <a className="skip-link" href="#workspace">Ir al contenido</a>
       <header className="operator-header">
-        <Link className="brand" href="/operations">MIRA<span>Operaciones</span></Link>
-        <nav aria-label="Navegación principal"><Link href="/operations/catalog">Catálogo</Link><Link href="/operations">Nuevo producto</Link><button className="button-quiet" onClick={() => void logout()} disabled={leaving}>Cerrar sesión</button></nav>
+        <div className="operator-header-inner">
+          <Link className="brand" href="/operations/catalog" aria-label="MIRA · Ir al catálogo">MIRA<span>Operaciones</span></Link>
+          <nav aria-label="Navegación principal">
+            <Link href="/operations/catalog" aria-current={pathname === "/operations/catalog" ? "page" : pathname.startsWith("/operations/products/") ? "location" : undefined}>Catálogo</Link>
+            <Link href="/operations" aria-current={pathname === "/operations" ? "page" : undefined}>Nuevo producto</Link>
+          </nav>
+          <p className="demo-marker">Demo aislada · Datos ficticios</p>
+          <button className="button-quiet logout-button" onClick={() => void logout()} disabled={leaving}>Cerrar sesión</button>
+        </div>
       </header>
-      <main id="workspace" className="operator-page">{children}</main>
+      <main id="workspace" className="operator-page" tabIndex={-1}>{children}</main>
       <footer className="operator-footer">Entorno de demostración local · Datos ficticios</footer>
     </div>
   </OperatorContext>;

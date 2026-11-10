@@ -113,3 +113,47 @@ Publication requires review of the entire allowlisted patch and explicit externa
 approval naming its canonical manifest digest. ADR acceptance and SHA-bound merge
 have separate human gates. Do not deploy or migrate non-test databases after merge.
 Recovery preserves data/history and disables the surface or uses a reviewed fix.
+
+## UX-01 Retail Calm: catalog workspace
+
+Catalog is the principal destination after login and from the MIRA brand. New
+product creation keeps /operations; details keep their existing UUID routes.
+There are still only two primary navigation destinations. Current navigation is
+exposed with aria-current; the keyboard skip link targets the workspace.
+
+Product results precede secondary category administration in both DOM and mobile
+reading order. The single semantic list presents aligned product/category/state
+rows on desktop and compact cards below 768 pixels. Desktop column headings are
+visual scanning aids, not a replacement for the accessible list and explicit
+product links. Cards retain full product names, category fallback and textual
+administrative state; meaning never depends on color. No responsive duplicate
+list, per-product detail fetch, fake search, SKU, price or stock total is added.
+
+A labeled filter remains next to results. A local Gestionar categorías anchor
+reaches the secondary category panel without a new route or hidden menu. Loaded
+category buttons reflect selection with aria-pressed. Category paging, opaque
+product cursors, stale-read invalidation and filter resets remain unchanged.
+Creation is displayed only with its existing capability. Missing category-read
+permission retains the all/uncategorized filter and explicit permission feedback;
+missing product-read permission exposes no result list. UI hints do not authorize
+writes. Administrative activation is explicitly distinct from publication,
+stock availability and sellability.
+
+### Review acceptance
+
+- At 390×844 the first loaded product is fully visible before category creation.
+- At 1280×800 at least ten short-name product rows are fully visible.
+- No page horizontal overflow at 320 pixels; wrap long names rather than truncate
+  content. Verify the six requested viewport widths and 320-pixel reflow.
+- Native labels, keyboard focus, 44-pixel operational targets and list/card
+  semantics remain usable. Text contrast is at least 4.5:1 and essential control
+  boundaries/focus at least 3:1; decorative dividers are not control boundaries.
+- Retain every previous authentication, CSRF, pagination, permission, activation,
+  Inventory and uncertain-POST scenario. No write retries are introduced.
+
+Store actual screenshots, measured colors/layout, test output and the complete
+nine-file canonical patch/manifest externally for independent review. Scripted
+read-response presentation tests must be labeled separately from real persisted
+browser workflows. Preserve the known minimatch full-audit FAIL, production audit
+result and historical ADR status references above as explicit review limitations.
+Publication, merge, real provisioning and non-test schema use retain separate gates.

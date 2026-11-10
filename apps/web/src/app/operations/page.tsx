@@ -17,8 +17,8 @@ export default function OperationsPage() {
     router.push(`/operations/products/${encodeURIComponent(value)}`);
   }
   return <OperationsShell>
-    <div className="page-heading"><p className="eyebrow">Catálogo e inventario</p><h1>Prepará tu primera recepción</h1><p className="muted">Un recorrido simple para registrar identidad y existencia física.</p></div>
-    <p><Link href="/operations/catalog">Explorar catálogo y categorías</Link></p><div className="workspace-grid"><ProductCreateForm /><aside className="panel panel-subtle"><h2>Retomar un producto</h2><p>Si ya tenés su identificador, abrilo para consultar su stock.</p><form onSubmit={open}>
+    <div className="page-heading"><p className="eyebrow">Catálogo · Alta interna</p><h1>Nuevo producto</h1><p className="muted">Creá el producto y su primera presentación. La recepción de stock es un paso independiente.</p></div>
+    <p className="back-to-catalog"><Link href="/operations/catalog">Volver al catálogo</Link></p><div className="workspace-grid"><ProductCreateForm /><aside className="panel panel-subtle"><h2>Retomar un producto</h2><p>Si ya tenés su identificador, abrilo para consultar su stock.</p><form onSubmit={open}>
       <label htmlFor="product-id">UUID del producto</label><input id="product-id" name="product_id" required autoComplete="off" aria-describedby={error ? "lookup-error" : undefined} />
       {error && <p id="lookup-error" role="alert" className="field-error">{error}</p>}<button>Abrir producto</button>
     </form><p className="caption">También podés encontrarlo desde el catálogo por categoría.</p></aside></div>
