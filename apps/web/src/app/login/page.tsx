@@ -27,7 +27,7 @@ export default function LoginPage() {
     try {
       await signIn(String(data.get("username") ?? ""), String(data.get("password") ?? ""));
       form.reset();
-      router.replace("/operations");
+      router.replace("/operations/catalog");
     } catch (failure) {
       setError(messageFor(failure));
       window.setTimeout(() => errorRef.current?.focus(), 0);
@@ -36,7 +36,8 @@ export default function LoginPage() {
 
   return <main className="login-page">
     <section className="login-card" aria-labelledby="login-title">
-      <p className="eyebrow">MIRA · Acceso interno</p>
+      <div className="login-brand"><span className="login-wordmark">MIRA</span><span className="demo-marker">Demo aislada</span></div>
+      <p className="eyebrow">Acceso interno</p>
       <h1 id="login-title">Tu espacio de operaciones</h1>
       <p className="muted">Ingresá con tu cuenta habilitada para administrar productos y su recepción inicial.</p>
       {notice && <p className="notice" role="status">{notice}</p>}

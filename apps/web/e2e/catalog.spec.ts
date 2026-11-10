@@ -1,5 +1,5 @@
 import { expect, Page, test, TestInfo } from "@playwright/test";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const root = "/api/v1/operator";
@@ -9,12 +9,145 @@ const account = (info: TestInfo) => `fictional-${info.project.name}-${info.title
 const fixtureName = (info: TestInfo, scenario: string) => `Fictional ${info.project.name} ${scenario}`;
 const categoryName = (info: TestInfo, suffix: string) => `Fictional ${info.project.name} Navigation ${suffix}`;
 
+
+// Captures belong to the authorized native runner; never capture filled login fields.
+async function captureCatalogViewports(page: Page, info: TestInfo) {
+  if (info.project.name !== "desktop") return;
+  const measurements = [];
+  for (const [width, height] of [[320, 844], [390, 844], [768, 1024], [1024, 768], [1280, 800], [1440, 900]]) {
+    await page.setViewportSize({ width, height });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: path.join(artifacts, `catalog-${width}.png`), fullPage: false });
+    measurements.push(await page.evaluate(() => {
+      const items = Array.from(document.querySelectorAll(".catalog-list li"));
+      return { width: innerWidth, height: innerHeight, pageWidth: document.documentElement.scrollWidth,
+        fullyVisibleRows: items.filter((item) => { const r = item.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; }).length,
+        firstProductTop: items[0]?.getBoundingClientRect().top ?? null,
+        firstProductBottom: items[0]?.getBoundingClientRect().bottom ?? null,
+        categoryCreationTop: document.querySelector(".category-create")?.getBoundingClientRect().top ?? null,
+        presentation: items[0] ? getComputedStyle(items[0]).display : null,
+        targets: ["#catalog-filter", "nav a[aria-current]", ".logout-button", ".catalog-product-name"].map((selector) => {
+          const element = document.querySelector(selector)!;
+          const box = element.getBoundingClientRect();
+          return { selector, width: box.width, height: box.height };
+        }),
+        colors: (() => {
+          const panel = getComputedStyle(document.querySelector(".catalog-products")!);
+          const category = getComputedStyle(document.querySelector(".catalog-product-category")!);
+          const select = getComputedStyle(document.querySelector("select")!);
+          const activeLink = getComputedStyle(document.querySelector("nav a[aria-current]")!);
+          const badge = getComputedStyle(document.querySelector(".catalog-list .badge")!);
+          return { ink: getComputedStyle(document.body).color, canvas: getComputedStyle(document.documentElement).backgroundColor,
+            surface: panel.backgroundColor, muted: category.color, controlBorder: select.borderTopColor,
+            controlBackground: select.backgroundColor, activeText: activeLink.color, activeBackground: activeLink.backgroundColor,
+            badgeText: badge.color, badgeBackground: badge.backgroundColor,
+            focus: getComputedStyle(document.documentElement).getPropertyValue("--focus").trim() };
+        })(),
+      };
+    }));
+  }
+  writeFileSync(path.join(artifacts, "catalog-responsive.json"), JSON.stringify(measurements, null, 2));
+  for (const result of measurements) {
+    expect(result.pageWidth).toBeLessThanOrEqual(result.width);
+    for (const target of result.targets) { expect(target.width).toBeGreaterThanOrEqual(44); expect(target.height).toBeGreaterThanOrEqual(44); }
+  }
+  expect(measurements.find((result) => result.width === 1280)!.fullyVisibleRows).toBeGreaterThanOrEqual(10);
+  const mobile = measurements.find((result) => result.width === 390)!;
+  expect(mobile.fullyVisibleRows).toBeGreaterThanOrEqual(1);
+  expect(mobile.firstProductBottom!).toBeLessThanOrEqual(844);
+  expect(mobile.firstProductTop!).toBeLessThan(mobile.categoryCreationTop!);
+  expect(mobile.presentation).toBe("flex");
+  await page.setViewportSize({ width: 1280, height: 800 });
+}
+
+
+// Scripted read responses exercise presentation only, never grant server permissions.
+async function presentationBoundaries(page: Page, info: TestInfo) {
+  const products = "**/api/v1/operator/catalog/products?*";
+  const categoryReads = "**/api/v1/operator/catalog/categories";
+  const longName = `Producto ficticio ${"presentación extensa ".repeat(7)}${"X".repeat(70)}`.slice(0, 255);
+  await page.route(categoryReads, async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { categories: Array.from({ length: 50 }, (_, index) => ({
+      id: `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      name: `Categoría ficticia ${index} ${"clasificación extensa ".repeat(8)}`,
+    })), next_cursor: null } });
+  });
+  await page.route(products, async (route) => {
+    const response = await route.fetch();
+    const data = await response.json();
+    data.products[0].name = longName;
+    await route.fulfill({ response, json: data });
+  });
+  await catalog(page);
+  await expect(page.locator(".category-navigation li")).toHaveCount(50);
+  await expect(page.locator(".catalog-list li").first().getByRole("link")).toHaveText(longName);
+  await expect(page.getByLabel("Nombre de categoría", { exact: true })).toHaveCount(0);
+  for (const width of [320, 390, 768, 1280]) {
+    await page.setViewportSize({ width, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    expect(await page.locator(".catalog-product-name").first().evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("link", { name: "Gestionar categorías", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Categorías", exact: true })).toBeInViewport();
+  await page.getByRole("link", { name: "Volver a productos", exact: true }).click();
+  await expect(page.locator("#catalog-products-title")).toBeFocused();
+  // Text-resize stress is separate from the six unzoomed screenshot fixtures.
+  await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.evaluate(() => { document.documentElement.style.removeProperty("font-size"); });
+  await page.reload();
+  await expect(page.locator(".catalog-list li")).toHaveCount(50);
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("link", { name: "Ir al contenido", exact: true })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#workspace")).toBeFocused();
+  const filterControl = page.getByLabel("Filtrar productos");
+  await filterControl.focus();
+  expect(await filterControl.evaluate((element) => getComputedStyle(element).outlineWidth)).toBe("3px");
+  await page.unroute(products);
+  let release!: () => void;
+  const hold = new Promise<void>((resolve) => { release = resolve; });
+  await page.route(products, async (route) => { await hold; await route.fulfill({ json: { products: [], next_cursor: null } }); });
+  await page.getByRole("button", { name: "Volver al inicio / actualizar", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Consultando productos" })).toBeVisible();
+  release();
+  await expect(page.getByRole("heading", { name: "Sin productos en este filtro" })).toBeVisible();
+  await page.unroute(products);
+  await page.route(products, (route) => route.fulfill({ status: 503, json: { error: { code: "unavailable" } } }));
+  await page.getByRole("button", { name: "Volver al inicio / actualizar", exact: true }).click();
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("servicio no está disponible");
+  await page.unroute(products);
+  await page.unroute(categoryReads);
+  await page.getByRole("button", { name: "Reintentar consulta", exact: true }).click();
+  await expect(page.locator(".catalog-list li")).toHaveCount(50);
+  await page.route("**/api/v1/operator/auth/session", (route) => route.fulfill({ json: { authenticated: true, capabilities: ["catalog.read_product"] } }));
+  await page.reload();
+  await expect(page.locator("#catalog-basic-filter")).toBeVisible();
+  await expect(page.getByText("Sin permiso para consultar categorías.", { exact: true })).toBeVisible();
+  await page.route("**/api/v1/operator/auth/session", (route) => route.fulfill({ json: { authenticated: true, capabilities: [] } }));
+  await page.reload();
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("no tiene permiso para consultar productos");
+  await expect(page.locator(".catalog-list")).toHaveCount(0);
+  await page.unroute("**/api/v1/operator/auth/session");
+  await page.reload();
+  await expect(page.locator(".catalog-list li")).toHaveCount(50);
+  await page.setViewportSize(info.project.use.viewport!);
+  writeFileSync(path.join(artifacts, `presentation-boundaries-${info.project.name}.json`), JSON.stringify({
+    source: "scripted GET responses in authorized native browser test; no simulated writes or server grants",
+    longNameLength: longName.length, categories: 50, widths: [320, 390, 768, 1280],
+    keyboardSkipAndFocus: "PASS", categoryAnchorRoundTrip: "PASS", textResize200Percent: "PASS", loadingEmptyErrorRecovery: "PASS", partialPermissionRendering: "PASS",
+  }, null, 2));
+}
+
 async function login(page: Page, info: TestInfo) {
   await page.goto("/login");
   await page.getByLabel("Usuario", { exact: true }).fill(account(info));
   await page.getByLabel("Contraseña", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Iniciar sesión", exact: true }).click();
-  await expect(page).toHaveURL(/\/operations$/);
+  await expect(page).toHaveURL(/\/operations\/catalog$/);
+  await expect(page.getByRole("navigation").getByRole("link", { name: "Catálogo", exact: true })).toHaveAttribute("aria-current", "page");
 }
 async function catalog(page: Page) {
   await page.getByRole("navigation").getByRole("link", { name: "Catálogo", exact: true }).click();
@@ -37,6 +170,7 @@ async function createCategory(page: Page, name: string) {
 
 test("catalog-journey", async ({ page }, info) => {
   await login(page, info);
+  await page.getByRole("navigation").getByRole("link", { name: "Nuevo producto", exact: true }).click();
   await page.getByLabel("Nombre del producto", { exact: true }).fill(`Fictional ${info.project.name} browser catalog`);
   await page.getByLabel("Presentación", { exact: true }).fill("Fictional presentation");
   await page.getByLabel("SKU", { exact: true }).fill(`CATALOG-${info.project.name}-journey`);
@@ -84,6 +218,7 @@ test("catalog-readonly", async ({ page }, info) => {
     return (await fetch(`${root}/catalog/categories`, { method: "POST", headers: { "Content-Type": "application/json", "X-CSRFToken": csrf.csrf_token }, body: JSON.stringify({ name: "Should not persist" }) })).status;
   }, root);
   expect(denied).toBe(403);
+  await presentationBoundaries(page, info);
 });
 
 test("catalog-revoked", async ({ page }, info) => {
@@ -96,10 +231,17 @@ test("catalog-revoked", async ({ page }, info) => {
 });
 
 test("catalog-stale", async ({ page }, info) => {
+  let detailReads = 0;
+  page.on("request", (request) => {
+    if (request.method() === "GET" && /\/api\/v1\/operator\/catalog\/products\/[0-9a-f-]{36}$/.test(new URL(request.url()).pathname)) detailReads += 1;
+  });
   await login(page, info);
   await catalog(page);
   await filter(page, categoryName(info, "A"));
-  await expect(page.locator(".catalog-list li")).toHaveCount(50);
+  const semanticList = page.getByRole("list", { name: "Productos del catálogo", exact: true });
+  await expect(semanticList).toBeVisible();
+  await expect(semanticList.getByRole("listitem")).toHaveCount(50);
+  await captureCatalogViewports(page, info);
   await page.getByRole("button", { name: "Más productos", exact: true }).click();
   await expect(page.locator(".catalog-list li")).toHaveCount(2);
   const resetRequest = page.waitForRequest((request) => request.url().includes("/catalog/products?category=uncategorized"));
@@ -126,6 +268,7 @@ test("catalog-stale", async ({ page }, info) => {
   release();
   await expect(page.getByRole("button", { name: "Más productos", exact: true })).toHaveCount(0);
   await expect(page.locator(".catalog-list")).not.toContainText("Page");
+  expect(detailReads).toBe(0);
 });
 
 test("catalog-lost-category", async ({ page }, info) => {

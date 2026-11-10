@@ -9,15 +9,37 @@ const username = (info: TestInfo) => `fictional-${info.project.name}-${info.titl
 
 async function login(page: Page, info: TestInfo) {
   await page.goto("/login");
+  if (info.title === "journey") {
+    await expect(page.getByLabel("Usuario", { exact: true })).toHaveValue("");
+    await expect(page.getByLabel("Contraseña", { exact: true })).toHaveValue("");
+    await page.screenshot({ path: path.join(artifacts, `login-${info.project.name}.png`), fullPage: true });
+    if (info.project.name === "desktop") {
+      await page.setViewportSize({ width: 320, height: 844 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: path.join(artifacts, "login-320.png"), fullPage: true });
+      await page.setViewportSize(info.project.use.viewport!);
+    }
+  }
   await page.getByLabel("Usuario", { exact: true }).fill(username(info));
   await page.keyboard.press("Tab");
   await expect(page.getByLabel("Contraseña", { exact: true })).toBeFocused();
   await page.getByLabel("Contraseña", { exact: true }).fill(password);
-  if (info.title === "journey") await page.screenshot({ path: path.join(artifacts, `login-${info.project.name}.png`), fullPage: true });
   await page.getByLabel("Contraseña", { exact: true }).press("Enter");
+  await expect(page).toHaveURL(/\/operations\/catalog$/);
+  await expect(page.getByRole("navigation").getByRole("link", { name: "Catálogo", exact: true })).toHaveAttribute("aria-current", "page");
+  await page.getByRole("navigation").getByRole("link", { name: "Nuevo producto", exact: true }).click();
   await expect(page).toHaveURL(/\/operations$/);
-  await expect(page.getByRole("heading", { name: "Prepará tu primera recepción" })).toBeVisible();
-  if (info.title === "journey") await page.screenshot({ path: path.join(artifacts, `creation-${info.project.name}.png`), fullPage: true });
+  await expect(page.getByRole("heading", { name: "Nuevo producto", exact: true })).toBeVisible();
+  await expect(page.getByRole("navigation").getByRole("link", { name: "Nuevo producto", exact: true })).toHaveAttribute("aria-current", "page");
+  if (info.title === "journey") {
+    await page.screenshot({ path: path.join(artifacts, `creation-${info.project.name}.png`), fullPage: true });
+    if (info.project.name === "desktop") {
+      await page.setViewportSize({ width: 320, height: 844 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: path.join(artifacts, "creation-320.png"), fullPage: true });
+      await page.setViewportSize(info.project.use.viewport!);
+    }
+  }
 }
 
 async function create(page: Page, info: TestInfo) {
@@ -55,6 +77,12 @@ test("journey", async ({ page }, info) => {
   await expect(page.locator(".stock-count")).toHaveText("12 EACH");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: path.join(artifacts, `journey-${info.project.name}.png`), fullPage: true });
+  if (info.project.name === "desktop") {
+    await page.setViewportSize({ width: 320, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: path.join(artifacts, "journey-320.png"), fullPage: true });
+    await page.setViewportSize(info.project.use.viewport!);
+  }
   await page.getByRole("button", { name: "Cerrar sesión" }).click();
   await expect(page).toHaveURL(/\/login$/);
   await page.goto("/operations");

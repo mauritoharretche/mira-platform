@@ -83,43 +83,60 @@ export function CatalogBrowser() {
   }
   const current = page?.key === key ? page.value : null;
   return <>
-    <div className="page-heading"><p className="eyebrow">Catálogo operativo</p><h1>Organizá tus productos</h1><p className="muted">Clasificación y estado administrativo. Este entorno no habilita ventas.</p></div>
+    <div className="page-heading catalog-page-heading"><p className="eyebrow">Catálogo operativo</p><h1>Organizá tus productos</h1><p className="muted">Clasificación y estado administrativo. Activar no significa publicado, disponible ni vendible.</p></div>
     <div className="catalog-layout">
-      <aside className="panel panel-subtle"><h2>Categorías</h2>
-        {!canCategories ? <p>Sin permiso para consultar categorías.</p> : <>
-          <label htmlFor="catalog-filter">Filtrar productos</label><select id="catalog-filter" value={filter} onChange={(event) => selectFilter(event.target.value)} disabled={!canRead}>
-            <option value="all">Todos los productos</option><option value="uncategorized">Sin categoría</option>
-            {filter !== "all" && filter !== "uncategorized" && !categories.some((item) => item.id === filter) && <option value={filter}>Categoría seleccionada — cargá más categorías</option>}
-            {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-          </select>
-          <ul className="category-navigation" aria-label="Categorías cargadas">{categories.map((category) => <li key={category.id}><button className="button-quiet" disabled={!canRead} onClick={() => selectFilter(category.id)}>{category.name}</button></li>)}</ul>
-          <p className="caption">Las categorías se cargan por páginas. Cambiar el filtro reinicia el listado.</p>
-          {categoryError && <p role="alert">{categoryError}</p>}
+      <section className="panel catalog-products" aria-labelledby="catalog-products-title">
+        <div className="section-heading"><h2 id="catalog-products-title" tabIndex={-1}>Productos</h2>
+          {capabilities.includes("catalog.create_product_with_initial_variant") && <Link className="entry-link button-primary" href="/operations">Nuevo producto</Link>}
+        </div>
+        <div className="catalog-toolbar">
+          <div className="catalog-filter">
+            <label htmlFor={canCategories ? "catalog-filter" : "catalog-basic-filter"}>Filtrar productos</label>
+            <select id={canCategories ? "catalog-filter" : "catalog-basic-filter"} value={filter} onChange={(event) => selectFilter(event.target.value)} disabled={!canRead}>
+              <option value="all">Todos los productos</option><option value="uncategorized">Sin categoría</option>
+              {canCategories && <>
+                {filter !== "all" && filter !== "uncategorized" && !categories.some((item) => item.id === filter) && <option value={filter}>Categoría seleccionada — cargá más categorías</option>}
+                {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+              </>}
+            </select>
+          </div>
+          <a className="category-shortcut" href="#catalog-categories">Gestionar categorías</a>
+        </div>
+        {!canRead ? <p role="alert" className="catalog-message notice">Tu cuenta no tiene permiso para consultar productos.</p> : <>
+          {error && <p role="alert" className="catalog-message error-box">{error}</p>}
+          {!current && !error && <p role="status" className="catalog-message">Consultando productos…</p>}
+          {current && <>{!current.products.length ? <div className="catalog-message empty-state"><h3>Sin productos en este filtro</h3><p>No hay productos para este filtro. Probá otra categoría o volvé a todos los productos.</p></div> : <>
+            <div className="catalog-columns" aria-hidden="true"><span>Producto</span><span>Categoría</span><span>Estado administrativo</span></div>
+            <ul className="catalog-list" role="list" aria-label="Productos del catálogo">{current.products.map((product) => <li key={product.id}>
+              <Link className="catalog-product-name" href={`/operations/products/${product.id}`}>{product.name}</Link>
+              <p className="catalog-product-category"><span className="visually-hidden">Categoría: </span>{product.category_id ? categories.find((item) => item.id === product.category_id)?.name ?? "Categoría asignada" : "Sin categoría"}</p>
+              <span className={`badge ${product.is_active ? "badge-active" : "badge-inactive"}`}>{product.is_active ? "Activo administrativamente" : "Inactivo administrativamente"}</span>
+            </li>)}</ul>
+          </>}
+          <div className="catalog-pagination"><button className="button-quiet" onClick={() => { reads.current.invalidate(); setPage(null); setAfter(null); setError(""); setAttempt((value) => value + 1); }}>Volver al inicio / actualizar</button>
+            {current.next_cursor && <button onClick={() => { reads.current.invalidate(); setPage(null); setError(""); setAfter(current.next_cursor); }}>Más productos</button>}</div>
+          <p className="caption catalog-page-note">Listado por páginas. Cambiar el filtro vuelve al inicio.</p></>}
+          {error && <button className="catalog-retry" onClick={() => { setError(""); setAttempt((value) => value + 1); }}>Reintentar consulta</button>}
+        </>}
+      </section>
+      <aside id="catalog-categories" className="panel category-panel" aria-labelledby="categories-title" tabIndex={-1}>
+        <h2 id="categories-title">Categorías</h2>
+        <a className="category-return" href="#catalog-products-title">Volver a productos</a>
+        {!canCategories ? <p className="muted">Sin permiso para consultar categorías.</p> : <>
+          <p className="caption">Elegí una categoría para filtrar el catálogo.</p>
+          <ul className="category-navigation" aria-label="Categorías cargadas">{categories.map((category) => <li key={category.id}><button className="button-quiet" disabled={!canRead} aria-pressed={filter === category.id} onClick={() => selectFilter(category.id)}>{category.name}</button></li>)}</ul>
+          {categoryError && <p role="alert" className="field-error">{categoryError}</p>}
           {categoryLoading && <p role="status">Consultando categorías…</p>}
           {categoryCursor && <button className="button-quiet" disabled={categoryLoading} onClick={() => { setCategoryLoading(true); setCategoryAfter(categoryCursor); setCategoryAttempt((value) => value + 1); }}>Más categorías</button>}
           <button className="button-quiet" disabled={categoryLoading} onClick={refreshCategories}>Actualizar categorías</button>
         </>}
-        {!canCategories && canRead && <><label htmlFor="catalog-basic-filter">Filtrar productos</label><select id="catalog-basic-filter" value={filter} onChange={(event) => selectFilter(event.target.value)}><option value="all">Todos los productos</option><option value="uncategorized">Sin categoría</option></select></>}
         {canCreate && <form className="category-create" onSubmit={(event) => void create(event)} aria-busy={busy}>
-          <h2>Nueva categoría</h2><label htmlFor="category-name">Nombre de categoría</label><input id="category-name" maxLength={255} value={name} onChange={(event) => setName(event.target.value)} required disabled={busy || uncertain} />
+          <h3>Nueva categoría</h3><label htmlFor="category-name">Nombre de categoría</label><input id="category-name" maxLength={255} value={name} onChange={(event) => setName(event.target.value)} required disabled={busy || uncertain} />
           <button className="button-primary" disabled={busy || uncertain}>{busy ? "Creando…" : "Crear categoría"}</button>
           {createError && <p role="alert" className="field-error">{createError}</p>}{notice && <p role="status">{notice}</p>}
           {uncertain && <p className="notice">La creación pudo haberse guardado. Consultá las categorías; no reenvíes esta operación.</p>}
         </form>}
       </aside>
-      <section className="panel" aria-labelledby="catalog-products-title"><div className="section-heading"><h2 id="catalog-products-title">Productos</h2><Link href="/operations">Nuevo producto</Link></div>
-        {!canRead ? <p role="alert">Tu cuenta no tiene permiso para consultar productos.</p> : <>
-          {error && <p role="alert" className="error-box">{error}</p>}
-          {!current && !error && <p role="status">Consultando productos…</p>}
-          {current && <>{!current.products.length ? <p className="empty-state">No hay productos para este filtro.</p> : <ul className="catalog-list">{current.products.map((product) => <li key={product.id}>
-            <Link href={`/operations/products/${product.id}`}>{product.name}</Link><span className="badge">{product.is_active ? "Activo administrativamente" : "Inactivo administrativamente"}</span>
-            <p className="caption">{product.category_id ? categories.find((item) => item.id === product.category_id)?.name ?? "Categoría asignada" : "Sin categoría"}</p>
-          </li>)}</ul>}
-          <div className="catalog-pagination"><button className="button-quiet" onClick={() => { reads.current.invalidate(); setPage(null); setAfter(null); setError(""); setAttempt((value) => value + 1); }}>Volver al inicio / actualizar</button>
-            {current.next_cursor && <button onClick={() => { reads.current.invalidate(); setPage(null); setError(""); setAfter(current.next_cursor); }}>Más productos</button>}</div></>}
-          {error && <button onClick={() => { setError(""); setAttempt((value) => value + 1); }}>Reintentar consulta</button>}
-        </>}
-      </section>
     </div>
   </>;
 }
