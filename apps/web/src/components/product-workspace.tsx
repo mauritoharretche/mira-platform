@@ -26,9 +26,10 @@ export function ProductWorkspace({ productId }: { productId: string }) {
   if (!canRead) return <section className="panel"><h1>Acceso restringido</h1><p role="alert">Tu cuenta no tiene permiso para consultar productos.</p></section>;
   const current = product?.id === productId ? product : null;
   return <>
-    <div className="page-heading"><p className="eyebrow">Producto y recepción</p><h1>{current?.name ?? "Consultando producto…"}</h1><p className="identifier">ID: {productId}</p>
+    <div className="page-heading product-heading"><div><p className="eyebrow">Ficha de producto</p><h1>{current?.name ?? "Consultando producto…"}</h1></div>
       <button className="button-quiet" onClick={() => { reads.current.invalidate(); setError(""); setAttempt((value) => value + 1); }}>Actualizar detalle</button>
     </div>
+    <details className="technical-details"><summary>Identificador técnico del producto</summary><p className="identifier">{productId}</p></details>
     {error && <p role="alert" className="error-box">{error}</p>}
     {!current && !error && <p role="status">Consultando producto…</p>}
     {current && <>

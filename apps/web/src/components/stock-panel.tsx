@@ -11,7 +11,8 @@ export function StockPanel({ product }: { product: Product }) {
   const [variantId, setVariantId] = useState(product.variants[0]?.id ?? "");
   const [observation, setObservation] = useState<Observation | null>(null);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [readError, setReadError] = useState("");
+  const [outcome, setOutcome] = useState<{ variantId: string; kind: "confirmed" | "uncertain" | "conflict" } | null>(null);
   const [busy, setBusy] = useState(false);
   const [more, setMore] = useState<Movement[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -38,31 +39,40 @@ export function StockPanel({ product }: { product: Product }) {
     setObservation({ variantId: id, stock: stock?.stock, history, consistent: matches() });
     setMore([]);
     setCursor(history?.next_cursor ?? null);
+    setReadError("");
   }, [canStock, canHistory]);
 
   useEffect(() => {
     if (!variantId) return;
     const controller = new AbortController();
-    load(variantId, controller.signal).catch((failure) => { if (!controller.signal.aborted) setError(messageFor(failure)); });
+    load(variantId, controller.signal).catch((failure) => { if (!controller.signal.aborted) setReadError(messageFor(failure)); });
     return () => { controller.abort(); generation.current += 1; };
   }, [variantId, load]);
 
   async function receive(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy || !canReceive) return;
+    if (busy || !canReceive || outcome?.variantId === variantId) return;
     if (unit !== "EACH" || !validPositiveInteger(quantity)) { setError("Seleccioná EACH e ingresá una cantidad entera positiva dentro del límite técnico."); return; }
-    setBusy(true); setError(""); setNotice("");
+    setBusy(true); setError(""); setReadError("");
     try {
       await post(`/inventory/variants/${encodeURIComponent(variantId)}/initial-receipt`, { quantity, unit, expected_version: null });
-      await load(variantId);
-      setNotice("Recepción inicial registrada. Consultá el saldo y su movimiento.");
     } catch (failure) {
       setError(messageFor(failure));
       if (failure instanceof OperatorError && (failure.code === "stock_conflict" || failure.uncertain)) {
-        try { await load(variantId); } catch { /* retain the uncertain/conflict outcome, never claim success */ }
+        setOutcome({ variantId, kind: failure.uncertain ? "uncertain" : "conflict" });
+        setObservation(null); setMore([]); setCursor(null);
+        try { await load(variantId); } catch (readFailure) { setReadError(messageFor(readFailure)); }
       }
       window.setTimeout(() => errorRef.current?.focus(), 0);
-    } finally { setBusy(false); }
+      setBusy(false);
+      return;
+    }
+    // A confirmed POST remains confirmed even when the following GET fails.
+    setOutcome({ variantId, kind: "confirmed" });
+    setObservation(null); setMore([]); setCursor(null);
+    setQuantity("");
+    try { await load(variantId); } catch (failure) { setReadError(messageFor(failure)); }
+    finally { setBusy(false); }
   }
 
   async function nextPage() {
@@ -73,33 +83,36 @@ export function StockPanel({ product }: { product: Product }) {
       const result = await request<History>(`/inventory/variants/${encodeURIComponent(variantId)}/movements?before_sequence=${cursor}`);
       if (current !== generation.current) return;
       setMore((previous) => [...previous, ...result.movements]); setCursor(result.next_cursor);
-    } catch (failure) { setError(messageFor(failure)); } finally { setBusy(false); }
+    } catch (failure) { setReadError(messageFor(failure)); } finally { setBusy(false); }
   }
 
   const current = observation?.variantId === variantId ? observation : null;
+  const currentOutcome = outcome?.variantId === variantId ? outcome.kind : null;
   const variant = product?.variants.find((item) => item.id === variantId);
   if (!canReadProduct) return <section className="panel"><h1>Acceso restringido</h1><p role="alert">Tu cuenta no tiene permiso para consultar productos.</p></section>;
   return <>
     {error && <p className="error-box" role="alert" tabIndex={-1} ref={errorRef}>{error}</p>}
-    {notice && <p className="success-box" role="status">{notice}</p>}
+    {currentOutcome === "confirmed" && <p className="success-box" role="status">Recepción inicial registrada. No la repitas. Consultá el saldo y su movimiento cuando la lectura esté disponible.</p>}
+    {currentOutcome === "uncertain" && <p className="notice" role="status">El resultado de la recepción es incierto. Consultá el saldo y los movimientos, pero esa consulta no confirma quién realizó el cambio. No repitas la recepción.</p>}
+    {readError && <p className="notice" role="alert">No pudimos actualizar la consulta: {readError} {currentOutcome === "confirmed" ? "La recepción sigue confirmada; no la repitas." : "Podés volver a consultar sin enviar otra recepción."}</p>}
     {product && <>
-      <section className="panel identity-panel"><div><span className="badge">{product.is_active ? "Activo administrativamente" : "Inactivo administrativamente"}</span><p className="caption">Registrar existencia no publica ni habilita ventas.</p></div>
-        <div><label htmlFor="variant">Presentación / SKU</label><select id="variant" value={variantId} onChange={(event) => { setVariantId(event.target.value); setError(""); setNotice(""); setUnit(""); setQuantity(""); }} disabled={busy}>
+      <section className="panel identity-panel"><div><p className="eyebrow">Presentación</p><h2>Identidad de inventario</h2><p className="muted">Stock de esta variante; no implica disponibilidad para vender.</p></div>
+        <div><label htmlFor="variant">Presentación / SKU</label><select id="variant" value={variantId} onChange={(event) => { generation.current += 1; setVariantId(event.target.value); setError(""); setReadError(""); setUnit(""); setQuantity(""); }} disabled={busy}>
           {product.variants.map((item) => <option key={item.id} value={item.id}>{item.label} · {item.sku}</option>)}
-        </select><p className="identifier">SKU: {variant?.sku}</p><p className="identifier">Variante: {variant?.id}</p>{variant?.barcode && <p>Código: {variant.barcode}</p>}</div>
+        </select><p className="presentation-meta">SKU <strong>{variant?.sku}</strong>{variant?.barcode && <> · Código <strong>{variant.barcode}</strong></>}</p><details className="technical-details"><summary>Identificador de variante</summary><p className="identifier">{variant?.id}</p></details></div>
       </section>
-      <div className="workspace-grid"><section className="panel" aria-labelledby="stock-title"><h2 id="stock-title">Existencia física</h2>
-        {!canStock ? <p role="alert">Sin permiso para consultar stock.</p> : !current ? <p role="status">Consultando stock…</p> : current.stock === null ? <><p className="empty-state">Sin recepción inicial</p><p className="muted">Esta variante aún no tiene una posición de stock.</p></> : <><p className="stock-count">{current.stock?.on_hand} <span>EACH</span></p><p className="caption">Versión {current.stock?.version} · Saldo físico; no calcula disponibilidad para venta.</p></>}
-        <button className="button-quiet" disabled={!variantId || busy} onClick={() => { setError(""); void load(variantId).catch((failure) => setError(messageFor(failure))); }}>Actualizar consulta</button>
-      </section><section className="panel" aria-labelledby="receipt-title"><h2 id="receipt-title">Recepción inicial</h2>
-        {!canReceive ? <p role="alert">Sin permiso para recibir stock.</p> : !canStock ? <p>Necesitás consultar el estado antes de iniciar una recepción.</p> : current?.stock === null ? <form onSubmit={(event) => void receive(event)} aria-busy={busy}>
+      <div className="workspace-grid stock-grid"><section className="panel" aria-labelledby="stock-title"><p className="eyebrow">Saldo actual</p><h2 id="stock-title">Existencia física</h2>
+        {!canStock ? <p role="alert">Sin permiso para consultar stock.</p> : !current ? <p role="status">{readError ? "Consulta de stock pendiente de actualización." : "Consultando stock…"}</p> : current.stock === null ? <><p className="empty-state">Sin recepción inicial</p><p className="muted">Esta variante aún no tiene una posición de stock.</p></> : <><p className="stock-count">{current.stock?.on_hand} <span>EACH</span></p><p className="caption">Saldo físico; no calcula disponibilidad para venta.</p><details className="technical-details"><summary>Versión de stock</summary><p className="identifier">{current.stock?.version}</p></details></>}
+        <button className="button-quiet" disabled={!variantId || busy} onClick={() => { setReadError(""); void load(variantId).catch((failure) => setReadError(messageFor(failure))); }}>Actualizar consulta</button>
+      </section><section className="panel" aria-labelledby="receipt-title"><p className="eyebrow">Operación</p><h2 id="receipt-title">Recepción inicial</h2>
+        {!canReceive ? <p role="alert">Sin permiso para recibir stock.</p> : !canStock ? <p>Necesitás consultar el estado antes de iniciar una recepción.</p> : currentOutcome ? <p className="muted">{currentOutcome === "confirmed" ? "Esta recepción fue confirmada. Actualizá la consulta si aún no ves el saldo." : "Revisá el estado antes de cualquier nueva operación. Esta pantalla no reenvía la recepción."}</p> : current?.stock === null ? <form onSubmit={(event) => void receive(event)} aria-busy={busy}>
           <label htmlFor="inventory-unit">Unidad de inventario</label><select id="inventory-unit" value={unit} required onChange={(event) => setUnit(event.target.value)} disabled={busy}><option value="">Seleccioná la unidad</option><option value="EACH">EACH — conteo de esta variante</option></select>
           <label htmlFor="quantity">Cantidad recibida</label><input id="quantity" value={quantity} onChange={(event) => setQuantity(event.target.value)} inputMode="numeric" maxLength={19} required disabled={busy} />
           <p className="caption">Conteo entero positivo. La unidad se declara explícitamente.</p><button className="button-primary" disabled={busy}>{busy ? "Registrando…" : "Registrar recepción inicial"}</button>
         </form> : <p className="muted">{current?.stock ? "La recepción inicial ya está registrada. Las recepciones posteriores quedan fuera de esta pantalla." : "Esperando la consulta de stock."}</p>}
       </section></div>
-      <section className="panel movement-panel" aria-labelledby="history-title"><h2 id="history-title">Historial de movimientos</h2>
-        {!canHistory ? <p role="alert">Sin permiso para consultar movimientos.</p> : !current ? <p role="status">Consultando movimientos…</p> : <>
+      <section className="panel movement-panel" aria-labelledby="history-title"><p className="eyebrow">Trazabilidad</p><h2 id="history-title">Historial de movimientos</h2>
+        {!canHistory ? <p role="alert">Sin permiso para consultar movimientos.</p> : !current ? <p role="status">{readError ? "Consulta de movimientos pendiente de actualización." : "Consultando movimientos…"}</p> : <>
           {!current.consistent && <p className="notice" role="status">El stock cambió durante la consulta. Actualizá para comparar saldo y movimientos.</p>}
           {!current.history?.movements.length ? <p className="empty-state">Todavía no hay movimientos.</p> : <div className="table-wrap"><table><caption className="visually-hidden">Movimientos en orden de secuencia descendente. Fechas en UTC.</caption><thead><tr><th>Secuencia</th><th>Movimiento</th><th>Antes</th><th>Cambio</th><th>Después</th><th>Fecha UTC</th></tr></thead><tbody>
             {[...(current.history?.movements ?? []), ...more].map((movement) => <tr key={movement.movement_id}><td data-label="Secuencia">{movement.sequence}</td><td data-label="Movimiento">{movement.kind === "RECEIPT" ? "Recepción" : "Ajuste"}</td><td data-label="Antes">{movement.quantity_before}</td><td data-label="Cambio">{movement.delta}</td><td data-label="Después">{movement.quantity_after} EACH</td><td data-label="Fecha UTC">{new Intl.DateTimeFormat("es-AR", { dateStyle: "short", timeStyle: "short", timeZone: "UTC" }).format(new Date(movement.recorded_at))}</td></tr>)}
