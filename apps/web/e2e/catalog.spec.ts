@@ -191,6 +191,7 @@ test("catalog-journey", async ({ page }, info) => {
   await expect(page.locator(".classification-panel").getByRole("status")).toContainText("Clasificación guardada");
   await page.getByRole("button", { name: "Activar producto", exact: true }).click();
   await expect(page.getByRole("button", { name: "Desactivar producto", exact: true })).toBeEnabled();
+  await page.screenshot({ path: path.join(artifacts, `ux02-classification-${info.project.name}.png`), fullPage: true });
   await expect(page.locator("#product-category option[value='']")).toBeDisabled();
   await page.getByLabel("Categoría del producto").selectOption({ label: categoryName(info, "B") });
   await page.getByRole("button", { name: "Guardar categoría", exact: true }).click();
@@ -202,6 +203,54 @@ test("catalog-journey", async ({ page }, info) => {
   await expect(page.locator(".classification-panel").getByRole("status")).toContainText("Clasificación guardada");
   await page.getByRole("button", { name: "Guardar categoría", exact: true }).click(); // authorized no-op
   await expect(page.getByText("Activo no significa publicado, disponible ni vendible.", { exact: false })).toBeVisible();
+  const optionValue = async (label: string) => page.getByLabel("Categoría del producto").locator("option", { hasText: label }).getAttribute("value");
+  const categoryA = (await optionValue(categoryName(info, "A")))!;
+  const categoryB = (await optionValue(categoryName(info, "B")))!;
+  const categoryCreated = (await optionValue(name))!;
+  const detail = "**/api/v1/operator/catalog/products/*";
+  async function scriptedServerCategory(categoryId: string) {
+    await page.unroute(detail);
+    await page.route(detail, async (route) => {
+      const response = await route.fetch();
+      const data = await response.json();
+      data.category_id = categoryId;
+      await route.fulfill({ response, json: data });
+    });
+  }
+  // Scripted GET responses model another writer without changing fixture Audit totals.
+  await scriptedServerCategory(categoryB);
+  await page.getByRole("button", { name: "Actualizar detalle", exact: true }).click();
+  await expect(page.getByLabel("Categoría del producto")).toHaveValue(categoryB); // clean local selection follows the server
+  await page.getByLabel("Categoría del producto").selectOption(categoryA);
+  await expect(page.getByText("Selección local sin guardar.")).toBeVisible();
+  await page.unroute(detail);
+  let releaseOld!: () => void;
+  const oldHeld = new Promise<void>((resolve) => { releaseOld = resolve; });
+  let oldStarted!: () => void;
+  const oldReady = new Promise<void>((resolve) => { oldStarted = resolve; });
+  let detailReads = 0;
+  await page.route(detail, async (route) => {
+    const response = await route.fetch();
+    const data = await response.json();
+    detailReads += 1;
+    data.category_id = detailReads === 1 ? categoryB : categoryCreated;
+    if (detailReads === 1) { oldStarted(); await oldHeld; }
+    await route.fulfill({ response, json: data }).catch(() => { /* obsolete GET may be aborted */ });
+  });
+  await page.getByRole("button", { name: "Actualizar detalle", exact: true }).click();
+  await oldReady;
+  await page.getByRole("button", { name: "Actualizar detalle", exact: true }).click();
+  await expect(page.locator(".classification-panel .saved-category strong")).toHaveText(name);
+  await expect(page.getByLabel("Categoría del producto")).toHaveValue(categoryA); // dirty selection survives refresh
+  await expect(page.getByText("La categoría guardada cambió durante tu edición.", { exact: false })).toBeVisible();
+  releaseOld();
+  await expect(page.locator(".classification-panel .saved-category strong")).toHaveText(name); // obsolete response cannot replace newer read
+  await page.screenshot({ path: path.join(artifacts, `ux02-pending-selection-${info.project.name}.png`), fullPage: true });
+  await expect(page.getByRole("button", { name: "Guardar categoría", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "Usar valor guardado" }).click();
+  await expect(page.getByLabel("Categoría del producto")).toHaveValue(categoryCreated);
+  await expect(page.getByText("Selección local sin guardar.")).toHaveCount(0);
+  await page.unroute(detail);
   await expect(page.locator(".stock-count")).toHaveCount(0); // no Inventory mutation
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: path.join(artifacts, `catalog-${info.project.name}.png`), fullPage: true });

@@ -16,6 +16,8 @@ export function ProductClassificationPanel({ product, onChanged }: { product: Pr
   const [loading, setLoading] = useState(true);
   const [categoryError, setCategoryError] = useState("");
   const [selected, setSelected] = useState(product.category_id ?? "");
+  const serverCategory = useRef(product.category_id ?? "");
+  const [serverChanged, setServerChanged] = useState(false);
   const [busy, setBusy] = useState(false);
   const [uncertain, setUncertain] = useState(false);
   const [error, setError] = useState("");
@@ -24,6 +26,16 @@ export function ProductClassificationPanel({ product, onChanged }: { product: Pr
   const alive = useRef(false);
   const errorRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  useEffect(() => {
+    const incoming = product.category_id ?? "";
+    const previous = serverCategory.current;
+    if (incoming === previous) return;
+    serverCategory.current = incoming;
+    if (selected === previous || selected === incoming) {
+      setSelected(incoming);
+      setServerChanged(false);
+    } else setServerChanged(true);
+  }, [product.category_id, selected]);
   useEffect(() => {
     if (!canList) return;
     const controller = new AbortController();
@@ -48,7 +60,7 @@ export function ProductClassificationPanel({ product, onChanged }: { product: Pr
         throw new OperatorError("invalid_response", undefined, true);
       }
       onChanged(result);
-      if (kind === "category") setSelected(result.category_id ?? "");
+      if (kind === "category") { setSelected(result.category_id ?? ""); setServerChanged(false); }
       setNotice(kind === "category" ? "Clasificación guardada." : "Estado administrativo guardado. Esto no habilita ventas.");
     } catch (failure) {
       if (!alive.current) return;
@@ -63,30 +75,32 @@ export function ProductClassificationPanel({ product, onChanged }: { product: Pr
   }
   const currentCategory = categories.find((item) => item.id === product.category_id);
   return <section className="panel classification-panel" aria-labelledby="classification-title">
-    <div className="section-heading"><h2 id="classification-title">Clasificación y estado</h2><span className="badge">{product.is_active ? "Activo administrativamente" : "Inactivo administrativamente"}</span></div>
-    <p>Categoría actual: <strong>{product.category_id ? currentCategory?.name ?? "Categoría asignada" : "Sin categoría"}</strong></p>
-    {product.category_id && !currentCategory && <p className="identifier">Categoría: {product.category_id}</p>}
+    <div className="section-heading"><div><p className="eyebrow">Organización comercial</p><h2 id="classification-title">Clasificación y estado</h2></div><span className={`badge ${product.is_active ? "badge-active" : "badge-inactive"}`}>{product.is_active ? "Activo administrativamente" : "Inactivo administrativamente"}</span></div>
+    <p className="saved-category">Categoría guardada: <strong>{product.category_id ? currentCategory?.name ?? "Categoría asignada" : "Sin categoría"}</strong></p>
+    {product.category_id && !currentCategory && <details className="technical-details"><summary>Identificador de categoría</summary><p className="identifier">{product.category_id}</p></details>}
     {error && <p role="alert" tabIndex={-1} ref={errorRef} className="error-box">{error}</p>}
     {notice && <p role="status" className="success-box">{notice}</p>}
     {uncertain && <p className="notice" role="status">Resultado incierto. Usá «Actualizar detalle» para consultar el estado; no reenvíes la escritura. La consulta no confirma quién realizó un cambio.</p>}
-    <div className="workspace-grid">
+    <div className="workspace-grid classification-grid">
       <div>{!canAssign ? <p>Sin permiso para cambiar la categoría.</p> : !canList ? <p>Necesitás permiso de consulta de categorías para elegir una en esta pantalla.</p> : <form onSubmit={assign} aria-busy={busy}>
-        <label htmlFor="product-category">Categoría del producto</label><select id="product-category" value={selected} onChange={(event) => setSelected(event.target.value)} disabled={busy || uncertain}>
+        <label htmlFor="product-category">Categoría del producto</label><select id="product-category" value={selected} onChange={(event) => { setSelected(event.target.value); if (event.target.value === (product.category_id ?? "")) setServerChanged(false); }} disabled={busy || uncertain}>
           <option value="" disabled={product.is_active}>Sin categoría</option>
           {selected && !categories.some((item) => item.id === selected) && <option value={selected}>Categoría actual — cargá más categorías para ver su nombre</option>}
           {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
         </select>
+        {selected !== (product.category_id ?? "") && <p className="pending-edit" role="status">Selección local sin guardar.</p>}
+        {serverChanged && selected !== (product.category_id ?? "") && <div className="notice" role="status"><p>La categoría guardada cambió durante tu edición. Revisá el valor actual antes de guardar.</p><button type="button" className="button-quiet" onClick={() => { setSelected(product.category_id ?? ""); setServerChanged(false); }}>Usar valor guardado</button><button type="button" className="button-quiet" onClick={() => setServerChanged(false)}>Conservar mi selección</button></div>}
         {loading && <p role="status">Consultando categorías…</p>}{categoryError && <p role="alert">{categoryError}</p>}
         {next && <button type="button" disabled={loading || busy} onClick={() => { setLoading(true); setAfter(next); setAttempt((value) => value + 1); }}>Más categorías disponibles</button>}
-        <button type="button" className="button-quiet" disabled={loading || busy} onClick={() => { reads.current.invalidate(); setLoading(true); setAfter(null); setAttempt((value) => value + 1); }}>Actualizar categorías disponibles</button>
-        <button className="button-primary" disabled={busy || uncertain || loading || (product.is_active && !selected)}>Guardar categoría</button>
+        <div className="classification-actions"><button type="button" className="button-quiet" disabled={loading || busy} onClick={() => { reads.current.invalidate(); setLoading(true); setAfter(null); setAttempt((value) => value + 1); }}>Actualizar categorías disponibles</button>
+        <button className="button-primary" disabled={busy || uncertain || loading || serverChanged || (product.is_active && !selected)}>Guardar categoría</button></div>
         {product.is_active && <p className="caption">Desactivá el producto antes de quitar su categoría.</p>}
       </form>}</div>
-      <div><h3>Activación administrativa</h3><p>Para activar se necesita una categoría. El precio y la medición no cambian con esta operación.</p>
+      <div><h3>Activación administrativa</h3><p className="muted">Requiere categoría guardada. No cambia precio ni medición.</p>
         {!canActivate ? <p>Sin permiso para cambiar el estado administrativo.</p> : <button disabled={busy || uncertain || (!product.is_active && product.category_id === null)} onClick={() => void mutate("active", { is_active: !product.is_active })}>{product.is_active ? "Desactivar producto" : "Activar producto"}</button>}
         {!product.is_active && !product.category_id && <p className="caption">Asigná una categoría antes de activar.</p>}
       </div>
     </div>
-    <p className="caption">Activo no significa publicado, disponible ni vendible. Los editores de precios y medición no están incluidos en esta pantalla; eso no indica ausencia de esos datos.</p>
+    <p className="caption">Activo no significa publicado, disponible ni vendible.</p><details className="technical-details"><summary>Alcance de esta pantalla</summary><p>Los editores de precios y medición no están incluidos aquí; eso no indica ausencia de esos datos.</p></details>
   </section>;
 }

@@ -1,5 +1,5 @@
 import { expect, Page, test, TestInfo } from "@playwright/test";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const root = "/api/v1/operator";
@@ -68,11 +68,64 @@ async function control(action: "revoke" | "expire", info: TestInfo) {
 
 test("journey", async ({ page }, info) => {
   await login(page, info);
+  // Native validation reports the first invalid field and moves keyboard focus.
+  await page.getByRole("button", { name: "Crear producto y presentación" }).click();
+  await expect(page.getByLabel("Nombre del producto", { exact: true })).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByLabel("Nombre del producto", { exact: true })).toBeFocused();
+  await expect(page.getByLabel("Nombre del producto", { exact: true })).toHaveAttribute("aria-describedby", "product_name-error");
   await create(page, info);
+  if (info.project.name === "desktop") {
+    const measurements = [];
+    for (const width of [320, 390, 768, 1024, 1280, 1440]) {
+      await page.setViewportSize({ width, height: width < 800 ? 844 : 900 });
+      const measure = await page.evaluate(() => {
+        const panel = document.querySelector(".classification-panel")!;
+        const primary = document.querySelector(".stock-grid .button-primary")!;
+        const muted = document.querySelector(".identity-panel .muted")!;
+        const control = document.querySelector("#variant")!;
+        return { width: innerWidth, pageWidth: document.documentElement.scrollWidth,
+          panelWidth: panel.getBoundingClientRect().width, primaryWidth: primary.getBoundingClientRect().width,
+          colors: { ink: getComputedStyle(document.body).color, surface: getComputedStyle(panel).backgroundColor,
+            muted: getComputedStyle(muted).color, primaryText: getComputedStyle(primary).color,
+            primaryBackground: getComputedStyle(primary).backgroundColor,
+            controlBorder: getComputedStyle(control).borderTopColor } };
+      });
+      expect(measure.pageWidth).toBeLessThanOrEqual(width);
+      measurements.push(measure);
+      await page.screenshot({ path: path.join(artifacts, `ux02-product-${width}.png`), fullPage: true });
+    }
+    writeFileSync(path.join(artifacts, "ux02-responsive.json"), JSON.stringify(measurements, null, 2));
+    await page.setViewportSize(info.project.use.viewport!);
+  }
+  let receipts = 0;
+  page.on("request", (request) => { if (request.method() === "POST" && request.url().endsWith("/initial-receipt")) receipts += 1; });
+  await page.route("**/stock", (route) => route.fulfill({ status: 503, json: { error: { code: "unavailable" } } }));
   await receipt(page);
-  await expect(page.getByRole("status")).toContainText("Recepción inicial registrada");
+  await expect(page.getByRole("status").filter({ hasText: "Recepción inicial registrada" })).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "No pudimos actualizar la consulta" })).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "La recepción sigue confirmada" })).toBeVisible();
+  await expect(page.getByText("Sin recepción inicial", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Consulta de stock pendiente de actualización.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Registrar recepción inicial" })).toHaveCount(0);
+  await page.screenshot({ path: path.join(artifacts, `ux02-confirmed-read-failure-${info.project.name}.png`), fullPage: true });
+  expect(receipts).toBe(1);
+  await page.unroute("**/stock");
+  await page.getByRole("button", { name: "Actualizar consulta" }).click();
   await expect(page.locator(".stock-count")).toHaveText("12 EACH");
   await expect(page.getByRole("cell", { name: /^(Movimiento )?Recepción$/ })).toBeVisible();
+  expect(receipts).toBe(1);
+  // Scripted GET only: prove exact rendering above Number.MAX_SAFE_INTEGER.
+  await page.route("**/stock", async (route) => {
+    const response = await route.fetch();
+    const data = await response.json();
+    data.stock.on_hand = "9007199254740993";
+    await route.fulfill({ response, json: data });
+  });
+  await page.getByRole("button", { name: "Actualizar consulta" }).click();
+  await expect(page.locator(".stock-count")).toHaveText("9007199254740993 EACH");
+  await page.unroute("**/stock");
+  await page.getByRole("button", { name: "Actualizar consulta" }).click();
+  await expect(page.locator(".stock-count")).toHaveText("12 EACH");
   await page.reload();
   await expect(page.locator(".stock-count")).toHaveText("12 EACH");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
