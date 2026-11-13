@@ -23,6 +23,9 @@ TOOL_PATH = "scripts/engineering/delivery.py"
 POLICY_PATH = ".github/rulesets/protect-main.json"
 APP_ID = 15368
 MARKER = "MIRA_DELIVERY_IDENTITY="
+IDENTITY_PAGES = 3
+IDENTITY_COMMITS_PER_PAGE = 100
+IDENTITY_SECONDS = 30
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 PR_PARAMETERS = {
@@ -286,13 +289,14 @@ def load_manifest(path, git):
     return value, digest(raw)
 
 
-def prepare(git, *, branch, base, allowlist, message, title, body, evidence, output):
+def prepare(git, gh, *, branch, base, allowlist, message, title, body, evidence, output):
     records, tree, patch_hash, patch = candidate(git, branch, base, allowlist)
+    identities = verify_publishing_identity(git, gh, base)
     value = validate_manifest({
         "schema": 1, "repository": REPOSITORY, "repository_id": REPOSITORY_ID, "branch": branch, "base": base,
         "files": records, "tree_sha256": tree, "patch_sha256": patch_hash,
         "tool_sha256": digest(Path(__file__).read_bytes()), "policy_sha256": digest(canonical(POLICY)),
-        "author": git.identity("GIT_AUTHOR_IDENT"), "committer": git.identity("GIT_COMMITTER_IDENT"),
+        "author": identities["author"], "committer": identities["committer"],
         "commit_message": message.rstrip("\n"), "pr_title": title, "pr_body": body, "evidence": evidence,
     })
     directory = external(output, git)
@@ -302,6 +306,14 @@ def prepare(git, *, branch, base, allowlist, message, title, body, evidence, out
     write_new(directory / "review-summary.json", canonical({"manifest_sha256": digest(canonical(value)),
               "files": records, "tree_sha256": tree, "approval": "Not granted by this tool; external human approval required"}))
     return {"manifest": str(directory / "manifest.json"), "manifest_sha256": digest(canonical(value)), "files": len(records)}
+
+
+def validated_account(value):
+    require(isinstance(value, dict) and set(value) == {"id", "login", "type"}
+            and type(value.get("id")) is int and value["id"] > 0
+            and isinstance(value.get("login"), str) and value["login"]
+            and value.get("type") == "User", "Authenticated GitHub account cannot be verified")
+    return value
 
 
 class GitHub:
@@ -318,6 +330,12 @@ class GitHub:
         prefix = "repos/" + REPOSITORY
         require(path == prefix or path.startswith(prefix + "/"), "Unexpected GitHub destination")
         return decode_json(command(["gh", "api", "--hostname", "github.com", path], timeout=self.timeout()))
+
+    def authenticated_user(self):
+        # This is the only non-repository endpoint; never widen get() for it.
+        value = decode_json(command(["gh", "api", "--hostname", "github.com", "user",
+                                     "--jq", "{id,login,type}"], timeout=self.timeout()))
+        return validated_account(value)
 
     def items(self, path, key=None):
         result = []
@@ -343,6 +361,71 @@ class GitHub:
 
 def endpoint(suffix=""):
     return "repos/" + REPOSITORY + suffix
+
+
+def verify_publishing_identity(git, gh, base):
+    """Verify both Git roles against the authenticated owner and public attribution."""
+    require(SHA.fullmatch(base) is not None, "Invalid base SHA")
+    identities = {"author": git.identity("GIT_AUTHOR_IDENT"),
+                  "committer": git.identity("GIT_COMMITTER_IDENT")}
+    previous_deadline = gh.deadline
+    deadline = time.monotonic() + IDENTITY_SECONDS
+    gh.deadline = min(previous_deadline, deadline) if previous_deadline is not None else deadline
+    try:
+        def require_time_remaining():
+            require(time.monotonic() < gh.deadline, "GitHub identity observation deadline exceeded")
+
+        repository = gh.get(endpoint())
+        require(isinstance(repository, dict) and repository.get("id") == REPOSITORY_ID
+                and repository.get("full_name") == REPOSITORY
+                and isinstance(repository.get("owner"), dict), "Repository owner cannot be verified")
+        owner = repository["owner"]
+        login = REPOSITORY.split("/", 1)[0]
+        require(type(owner.get("id")) is int and owner["id"] > 0
+                and owner.get("login") == login and owner.get("type") == "User",
+                "Repository owner cannot be verified")
+        require_time_remaining()
+        account = gh.authenticated_user()
+        require(account["id"] == owner["id"] and account["login"] == owner["login"],
+                "Authenticated GitHub account is not the repository owner")
+        require_time_remaining()
+        accepted_emails = {f"{account['id']}+{login}@users.noreply.github.com",
+                           f"{login}@users.noreply.github.com"}
+        for identity in identities.values():
+            name, email = identity["name"], identity["email"]
+            require(0 < len(name) <= 128 and name == name.strip() and name.isprintable()
+                    and not any(char in "<>@" for char in name)
+                    and email in accepted_emails, "Git publishing identity is not a verified noreply identity")
+
+        found = {"author": False, "committer": False}
+        for page in range(1, IDENTITY_PAGES + 1):
+            commits = gh.get(endpoint(f"/commits?sha={base}&per_page={IDENTITY_COMMITS_PER_PAGE}&page={page}"))
+            require(isinstance(commits, list) and len(commits) <= IDENTITY_COMMITS_PER_PAGE,
+                    "Public commit evidence is invalid")
+            for item in commits:
+                require(isinstance(item, dict) and isinstance(item.get("commit"), dict),
+                        "Public commit evidence is invalid")
+                for role in found:
+                    recorded = item["commit"].get(role)
+                    associated = item.get(role)
+                    require(isinstance(recorded, dict) and isinstance(recorded.get("email"), str)
+                            and (associated is None or
+                                 (isinstance(associated, dict) and type(associated.get("id")) is int
+                                  and isinstance(associated.get("login"), str))),
+                            "Public commit evidence is invalid")
+                    if recorded["email"] == identities[role]["email"]:
+                        require(associated is not None and associated["id"] == account["id"]
+                                and associated["login"] == login, "Contradictory public Git identity attribution")
+                        found[role] = True
+            require_time_remaining()
+            if all(found.values()):
+                require_time_remaining()
+                return identities
+            if len(commits) < IDENTITY_COMMITS_PER_PAGE:
+                break
+        raise Blocked("Public attribution for both Git identities cannot be verified")
+    finally:
+        gh.deadline = previous_deadline
 
 
 def verify_rules(gh):
@@ -426,6 +509,9 @@ def publish(git, gh, manifest, approved_digest, *, execute=False, approval=None,
     require(not gh.items(endpoint("/pulls?state=open&head=mauritoharretche:" + manifest["branch"])), "PR already exists; inspect receipt")
     refs = git.text("ls-remote", "origin", "refs/heads/main", "refs/heads/" + manifest["branch"]).splitlines()
     require(refs == [manifest["base"] + "\trefs/heads/main"], "Remote base or feature ref changed")
+    identities = verify_publishing_identity(git, gh, manifest["base"])
+    require(identities["author"] == manifest["author"] and identities["committer"] == manifest["committer"],
+            "Git identity changed")
     if not execute:
         return {"dry_run": True, "manifest_sha256": approved_digest, "files": len(records),
                 "authorization": "Requires external human approval; no mutation performed"}
@@ -435,7 +521,6 @@ def publish(git, gh, manifest, approved_digest, *, execute=False, approval=None,
     baseline_tool = git.run("show", manifest["base"] + ":" + TOOL_PATH)
     require(digest(baseline_tool) == manifest["tool_sha256"], "Bootstrap/self-modified tooling cannot publish itself")
     check_approval(approval, git, approved_digest)
-    require(git.identity("GIT_AUTHOR_IDENT") == manifest["author"] and git.identity("GIT_COMMITTER_IDENT") == manifest["committer"], "Git identity changed")
     require(directory is not None, "External receipt directory required")
     output = external(directory, git)
     output.mkdir(mode=0o700)
@@ -453,6 +538,9 @@ def publish(git, gh, manifest, approved_digest, *, execute=False, approval=None,
         require(not git.run("diff", "--name-only") and not git.run("ls-files", "--others", "--exclude-standard"),
                 "Working content changed during staging")
         require(git.ref("HEAD") == manifest["base"], "HEAD changed during staging")
+        require(git.identity("GIT_AUTHOR_IDENT") == identities["author"] == manifest["author"]
+                and git.identity("GIT_COMMITTER_IDENT") == identities["committer"] == manifest["committer"],
+                "Git identity changed before commit")
         record("committing")
         git.run("commit", "--cleanup=verbatim", "--file=-", data=(manifest["commit_message"] + "\n").encode())
         state["commit"] = git.ref("HEAD")
@@ -641,7 +729,7 @@ def main(argv=None):
         git, gh = Git(args.root), GitHub()
         if args.operation == "prepare":
             read = lambda p: external(p, git).read_bytes()
-            result = prepare(git, branch=args.branch, base=args.base, allowlist=decode_json(read(args.allowlist)),
+            result = prepare(git, gh, branch=args.branch, base=args.base, allowlist=decode_json(read(args.allowlist)),
                              message=read(args.commit_message).decode(), title=args.pr_title, body=read(args.pr_body).decode(),
                              evidence=read(args.evidence).decode(), output=args.out_dir)
         elif args.operation == "rules":
