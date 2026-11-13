@@ -14,7 +14,8 @@ const categoryName = (info: TestInfo, suffix: string) => `Fictional ${info.proje
 async function captureCatalogViewports(page: Page, info: TestInfo) {
   if (info.project.name !== "desktop") return;
   const measurements = [];
-  for (const [width, height] of [[320, 844], [390, 844], [768, 1024], [1024, 768], [1280, 800], [1440, 900]]) {
+  // From a 1280px desktop, 200% and 400% browser zoom expose 640px and 320px CSS viewports.
+  for (const [width, height] of [[320, 844], [390, 844], [640, 844], [768, 1024], [1024, 768], [1280, 800], [1440, 900]]) {
     await page.setViewportSize({ width, height });
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: path.join(artifacts, `catalog-${width}.png`), fullPage: false });
@@ -93,10 +94,11 @@ async function presentationBoundaries(page: Page, info: TestInfo) {
   await expect(page.getByRole("heading", { name: "Categorías", exact: true })).toBeInViewport();
   await page.getByRole("link", { name: "Volver a productos", exact: true }).click();
   await expect(page.locator("#catalog-products-title")).toBeFocused();
-  // Text-resize stress is separate from the six unzoomed screenshot fixtures.
+  // Text-resize stress is separate from the unzoomed screenshot fixtures.
   await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.evaluate(() => { document.documentElement.style.removeProperty("font-size"); });
+  await page.goto("/operations/catalog"); // Fresh entry without an explicit focus fragment.
   await page.reload();
   await expect(page.locator(".catalog-list li")).toHaveCount(50);
   await page.keyboard.press("Tab");
@@ -106,6 +108,10 @@ async function presentationBoundaries(page: Page, info: TestInfo) {
   const filterControl = page.getByLabel("Filtrar productos");
   await filterControl.focus();
   expect(await filterControl.evaluate((element) => getComputedStyle(element).outlineWidth)).toBe("3px");
+  await page.keyboard.press("Shift+Tab");
+  expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe("BODY");
+  await page.keyboard.press("Tab");
+  await expect(filterControl).toBeFocused();
   await page.unroute(products);
   let release!: () => void;
   const hold = new Promise<void>((resolve) => { release = resolve; });
@@ -137,7 +143,7 @@ async function presentationBoundaries(page: Page, info: TestInfo) {
   writeFileSync(path.join(artifacts, `presentation-boundaries-${info.project.name}.json`), JSON.stringify({
     source: "scripted GET responses in authorized native browser test; no simulated writes or server grants",
     longNameLength: longName.length, categories: 50, widths: [320, 390, 768, 1280],
-    keyboardSkipAndFocus: "PASS", categoryAnchorRoundTrip: "PASS", textResize200Percent: "PASS", loadingEmptyErrorRecovery: "PASS", partialPermissionRendering: "PASS",
+    keyboardSkipAndFocus: "PASS", categoryAnchorRoundTrip: "PASS", textResize200Percent: "PASS", zoomReflowEquivalents: { "200%": 640, "400%": 320 }, loadingEmptyErrorRecovery: "PASS", partialPermissionRendering: "PASS",
   }, null, 2));
 }
 
@@ -182,10 +188,13 @@ test("catalog-journey", async ({ page }, info) => {
   await createCategory(page, ` ${name} `);
   await expect(page.getByRole("status").filter({ hasText: "Categoría creada" })).toContainText("Categoría creada");
   await filter(page, "Sin categoría");
+  await expect(page).toHaveURL(/\/operations\/catalog\?category=uncategorized$/);
   await expect(page.getByRole("link", { name: `Fictional ${info.project.name} browser catalog`, exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: path.join(artifacts, `catalog-navigation-${info.project.name}.png`), fullPage: true });
   await page.getByRole("link", { name: `Fictional ${info.project.name} browser catalog`, exact: true }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get("category")).toBe("uncategorized");
+  await expect(page.locator("#product-title")).toBeFocused();
   await page.getByLabel("Categoría del producto", { exact: true }).selectOption({ label: name });
   await page.getByRole("button", { name: "Guardar categoría", exact: true }).click();
   await expect(page.locator(".classification-panel").getByRole("status")).toContainText("Clasificación guardada");
@@ -259,6 +268,10 @@ test("catalog-journey", async ({ page }, info) => {
 test("catalog-readonly", async ({ page }, info) => {
   await login(page, info);
   await fixture(page, info, "catalog-readonly");
+  await page.getByRole("link", { name: "Volver al catálogo", exact: true }).click();
+  await expect(page.getByLabel("Filtrar productos")).toHaveValue((await page.locator("#catalog-filter option", { hasText: categoryName(info, "B") }).getAttribute("value"))!);
+  await expect(page.locator("#catalog-products-title")).toBeFocused();
+  await page.getByRole("link", { name: fixtureName(info, "catalog-readonly"), exact: true }).click();
   await expect(page.getByText("Sin permiso para cambiar la categoría.")).toBeVisible();
   await expect(page.getByText("Sin permiso para cambiar el estado administrativo.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Guardar categoría" })).toHaveCount(0);
@@ -268,6 +281,35 @@ test("catalog-readonly", async ({ page }, info) => {
   }, root);
   expect(denied).toBe(403);
   await presentationBoundaries(page, info);
+  const categoryB = await page.locator("#catalog-filter option", { hasText: categoryName(info, "B") }).getAttribute("value");
+  expect(categoryB).toMatch(/^[0-9a-f-]{36}$/);
+  await page.getByLabel("Filtrar productos").selectOption(categoryB!);
+  await expect.poll(() => new URL(page.url()).searchParams.get("category")).toBe(categoryB);
+  await page.getByLabel("Filtrar productos").selectOption("uncategorized");
+  await expect.poll(() => new URL(page.url()).searchParams.get("category")).toBe("uncategorized");
+  await page.goBack();
+  await expect(page.getByLabel("Filtrar productos")).toHaveValue(categoryB!);
+  await page.goForward();
+  await expect(page.getByLabel("Filtrar productos")).toHaveValue("uncategorized");
+  await page.goto(`/operations/catalog?after=invalid&category=${categoryB!.toUpperCase()}&unknown=https%3A%2F%2Fexample.invalid`);
+  await expect(page).toHaveURL(`/operations/catalog?category=${categoryB}`);
+  await expect(page.getByLabel("Filtrar productos")).toHaveValue(categoryB!);
+  await page.goto(`/operations/catalog?category=${categoryB}&category=${categoryB}&after=ffffffff-ffff-ffff-ffff-ffffffffffff`);
+  await expect(page).toHaveURL("/operations/catalog");
+  await page.goto(`/operations/catalog?category=${categoryB}&after=ffffffff-ffff-ffff-ffff-ffffffffffff`);
+  await expect(page.getByRole("heading", { name: "Sin productos en este filtro" })).toBeVisible();
+  await page.getByRole("button", { name: "Volver al inicio / actualizar", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/operations/catalog\\?category=${categoryB}(?:#.*)?$`));
+  await expect(page.locator(".catalog-list li").first()).toBeVisible();
+  let releaseCategories!: () => void;
+  const heldCategories = new Promise<void>((resolve) => { releaseCategories = resolve; });
+  await page.route("**/api/v1/operator/catalog/categories", async (route) => { await heldCategories; await route.continue(); });
+  try {
+    await page.goto(`/operations/catalog?category=${categoryB}`);
+    await expect(page.locator(`#catalog-filter option[value="${categoryB}"]`)).toHaveText("Categoría seleccionada — cargá más categorías");
+  } finally { releaseCategories(); }
+  await expect(page.locator(`#catalog-filter option[value="${categoryB}"]`)).toHaveText(categoryName(info, "B"));
+  await page.unroute("**/api/v1/operator/catalog/categories");
 });
 
 test("catalog-revoked", async ({ page }, info) => {
@@ -293,6 +335,22 @@ test("catalog-stale", async ({ page }, info) => {
   await captureCatalogViewports(page, info);
   await page.getByRole("button", { name: "Más productos", exact: true }).click();
   await expect(page.locator(".catalog-list li")).toHaveCount(2);
+  expect(detailReads).toBe(0); // List still has no per-product detail reads.
+  const pageTwo = new URL(page.url());
+  expect(pageTwo.searchParams.get("category")).toMatch(/^[0-9a-f-]{36}$/);
+  expect(pageTwo.searchParams.get("after")).toMatch(/^[0-9a-f-]{36}$/);
+  await page.locator(".catalog-list .catalog-product-name").first().click();
+  await expect.poll(() => new URL(page.url()).searchParams.get("after")).toBe(pageTwo.searchParams.get("after"));
+  await page.getByRole("link", { name: "Volver al catálogo", exact: true }).click();
+  await expect(page.locator(".catalog-list li")).toHaveCount(2);
+  await expect(page.locator("#catalog-products-title")).toBeFocused();
+  expect(new URL(page.url()).search).toBe(pageTwo.search);
+  await page.reload();
+  await expect(page.locator(".catalog-list li")).toHaveCount(2);
+  await page.goBack();
+  await expect(page.locator("#product-title")).toBeVisible();
+  await page.goForward();
+  await expect(page.locator(".catalog-list li")).toHaveCount(2);
   const resetRequest = page.waitForRequest((request) => request.url().includes("/catalog/products?category=uncategorized"));
   await filter(page, "Sin categoría");
   expect(new URL((await resetRequest).url()).searchParams.has("after")).toBe(false);
@@ -317,7 +375,7 @@ test("catalog-stale", async ({ page }, info) => {
   release();
   await expect(page.getByRole("button", { name: "Más productos", exact: true })).toHaveCount(0);
   await expect(page.locator(".catalog-list")).not.toContainText("Page");
-  expect(detailReads).toBe(0);
+  expect(detailReads).toBeGreaterThan(0);
 });
 
 test("catalog-lost-category", async ({ page }, info) => {

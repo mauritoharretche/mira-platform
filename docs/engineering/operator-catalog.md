@@ -157,3 +157,24 @@ read-response presentation tests must be labeled separately from real persisted
 browser workflows. Preserve the known minimatch full-audit FAIL, production audit
 result and historical ADR status references above as explicit review limitations.
 Publication, merge, real provisioning and non-test schema use retain separate gates.
+
+## UX-03 Retail Calm: contextual catalog navigation
+
+The product filter and product-page cursor are represented by the browser URL.
+`category` is `uncategorized` or a category UUID; omission means all products.
+`after` is the product UUID cursor returned by the preceding page. It is not the
+separate category-list cursor. Changing category starts at the first product page.
+Unknown, repeated, malformed or oversized URL parameters are normalized to a
+safe catalog location. A valid cursor paired manually with an incompatible filter
+may produce an empty page; use **Volver al inicio / actualizar** to clear it.
+The catalog does not invent page totals, a previous-page cursor or a stable
+cross-request snapshot.
+
+Product links carry the current validated filter and cursor. **Volver al
+catálogo** restores that view; a product opened directly returns to the initial
+catalog. Browser Back, Forward and reload also use the URL. At the first page,
+**Volver al inicio / actualizar** repeats the read without adding history. A
+selected category that has not appeared in the loaded category pages keeps a
+provisional label rather than changing the product filter. The UI preserves the
+existing skip link, keyboard focus cues, loading/error announcements and all
+server-side permissions. Navigation never retries a write.

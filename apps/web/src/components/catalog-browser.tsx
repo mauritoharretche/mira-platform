@@ -1,17 +1,18 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
+import { canonicalUuid, catalogHref, CatalogViewState, productHref } from "@/lib/catalog-view-state";
 import { Category, CategoryPage, catalogQuery, messageFor, OperatorError, post, ProductPage, ReadGeneration, request } from "@/lib/operations-api";
 import { useOperator } from "./operations-shell";
 
-export function CatalogBrowser() {
+export function CatalogBrowser({ view }: { view: CatalogViewState }) {
+  const router = useRouter();
   const { capabilities } = useOperator();
   const canRead = capabilities.includes("catalog.read_product");
   const canCategories = capabilities.includes("catalog.list_categories");
   const canCreate = capabilities.includes("catalog.create_category");
-  const [filter, setFilter] = useState("all");
-  const [after, setAfter] = useState<string | null>(null);
   const [page, setPage] = useState<{ key: string; value: ProductPage } | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoryCursor, setCategoryCursor] = useState<string | null>(null);
@@ -19,7 +20,7 @@ export function CatalogBrowser() {
   const [categoryAttempt, setCategoryAttempt] = useState(0);
   const [categoryLoading, setCategoryLoading] = useState(true);
   const [categoryError, setCategoryError] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState<{ key: string; message: string } | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [name, setName] = useState("");
   const [notice, setNotice] = useState("");
@@ -29,8 +30,12 @@ export function CatalogBrowser() {
   const reads = useRef(new ReadGeneration());
   const categoryReads = useRef(new ReadGeneration());
   const alive = useRef(false);
-  const key = catalogQuery(filter, after);
+  const filter = view.category;
+  const key = catalogQuery(filter, view.after);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  useEffect(() => {
+    if (window.location.hash === "#catalog-products-title") document.getElementById("catalog-products-title")?.focus();
+  }, [key]); // Navigation only: never move focus when a background GET resolves.
 
   useEffect(() => {
     if (!canRead) return;
@@ -38,8 +43,8 @@ export function CatalogBrowser() {
     const stream = reads.current;
     const token = stream.begin();
     request<ProductPage>(key, { signal: controller.signal }).then((value) => {
-      if (!controller.signal.aborted && stream.accepts(token)) { setPage({ key, value }); setError(""); }
-    }).catch((failure) => { if (!controller.signal.aborted && stream.accepts(token)) setError(messageFor(failure)); });
+      if (!controller.signal.aborted && stream.accepts(token)) { setPage({ key, value }); setError(null); }
+    }).catch((failure) => { if (!controller.signal.aborted && stream.accepts(token)) setError({ key, message: messageFor(failure) }); });
     return () => { controller.abort(); stream.invalidate(); };
   }, [key, attempt, canRead]);
 
@@ -57,7 +62,20 @@ export function CatalogBrowser() {
   }, [categoryAfter, categoryAttempt, canCategories]);
 
   function selectFilter(value: string) {
-    reads.current.invalidate(); setPage(null); setError(""); setFilter(value); setAfter(null);
+    if (value === filter) return;
+    reads.current.invalidate(); setPage(null); setError(null);
+    router.push(catalogHref({ category: value, after: null }));
+  }
+  function startOrRefresh() {
+    reads.current.invalidate(); setPage(null); setError(null);
+    if (view.after !== null) router.push(`${catalogHref({ category: filter, after: null })}#catalog-products-title`);
+    else setAttempt((value) => value + 1);
+  }
+  function nextPage(cursor: string) {
+    const after = canonicalUuid(cursor);
+    if (!after) return;
+    reads.current.invalidate(); setPage(null); setError(null);
+    router.push(`${catalogHref({ category: filter, after })}#catalog-products-title`);
   }
   function refreshCategories() {
     categoryReads.current.invalidate(); setCategoryLoading(true); setCategoryAfter(null); setCategoryAttempt((value) => value + 1);
@@ -82,6 +100,7 @@ export function CatalogBrowser() {
     } finally { if (alive.current) setBusy(false); }
   }
   const current = page?.key === key ? page.value : null;
+  const currentError = error?.key === key ? error.message : "";
   return <>
     <div className="page-heading catalog-page-heading"><p className="eyebrow">Catálogo operativo</p><h1>Organizá tus productos</h1><p className="muted">Clasificación y estado administrativo. Activar no significa publicado, disponible ni vendible.</p></div>
     <div className="catalog-layout">
@@ -94,8 +113,8 @@ export function CatalogBrowser() {
             <label htmlFor={canCategories ? "catalog-filter" : "catalog-basic-filter"}>Filtrar productos</label>
             <select id={canCategories ? "catalog-filter" : "catalog-basic-filter"} value={filter} onChange={(event) => selectFilter(event.target.value)} disabled={!canRead}>
               <option value="all">Todos los productos</option><option value="uncategorized">Sin categoría</option>
+              {filter !== "all" && filter !== "uncategorized" && !categories.some((item) => item.id === filter) && <option value={filter}>Categoría seleccionada{canCategories ? " — cargá más categorías" : ""}</option>}
               {canCategories && <>
-                {filter !== "all" && filter !== "uncategorized" && !categories.some((item) => item.id === filter) && <option value={filter}>Categoría seleccionada — cargá más categorías</option>}
                 {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
               </>}
             </select>
@@ -103,20 +122,21 @@ export function CatalogBrowser() {
           <a className="category-shortcut" href="#catalog-categories">Gestionar categorías</a>
         </div>
         {!canRead ? <p role="alert" className="catalog-message notice">Tu cuenta no tiene permiso para consultar productos.</p> : <>
-          {error && <p role="alert" className="catalog-message error-box">{error}</p>}
-          {!current && !error && <p role="status" className="catalog-message">Consultando productos…</p>}
+          {currentError && <p role="alert" className="catalog-message error-box">{currentError}</p>}
+          {!current && !currentError && <p role="status" className="catalog-message">Consultando productos…</p>}
           {current && <>{!current.products.length ? <div className="catalog-message empty-state"><h3>Sin productos en este filtro</h3><p>No hay productos para este filtro. Probá otra categoría o volvé a todos los productos.</p></div> : <>
             <div className="catalog-columns" aria-hidden="true"><span>Producto</span><span>Categoría</span><span>Estado administrativo</span></div>
             <ul className="catalog-list" role="list" aria-label="Productos del catálogo">{current.products.map((product) => <li key={product.id}>
-              <Link className="catalog-product-name" href={`/operations/products/${product.id}`}>{product.name}</Link>
+              <Link className="catalog-product-name" href={`${productHref(product.id, view)}#product-title`}>{product.name}</Link>
               <p className="catalog-product-category"><span className="visually-hidden">Categoría: </span>{product.category_id ? categories.find((item) => item.id === product.category_id)?.name ?? "Categoría asignada" : "Sin categoría"}</p>
               <span className={`badge ${product.is_active ? "badge-active" : "badge-inactive"}`}>{product.is_active ? "Activo administrativamente" : "Inactivo administrativamente"}</span>
             </li>)}</ul>
           </>}
-          <div className="catalog-pagination"><button className="button-quiet" onClick={() => { reads.current.invalidate(); setPage(null); setAfter(null); setError(""); setAttempt((value) => value + 1); }}>Volver al inicio / actualizar</button>
-            {current.next_cursor && <button onClick={() => { reads.current.invalidate(); setPage(null); setError(""); setAfter(current.next_cursor); }}>Más productos</button>}</div>
+          <p role="status" className="visually-hidden">{current.products.length} productos en esta página.</p>
+          <div className="catalog-pagination"><button className="button-quiet" onClick={startOrRefresh}>Volver al inicio / actualizar</button>
+            {current.next_cursor && <button onClick={() => nextPage(current.next_cursor!)}>Más productos</button>}</div>
           <p className="caption catalog-page-note">Listado por páginas. Cambiar el filtro vuelve al inicio.</p></>}
-          {error && <button className="catalog-retry" onClick={() => { setError(""); setAttempt((value) => value + 1); }}>Reintentar consulta</button>}
+          {currentError && <button className="catalog-retry" onClick={() => { setError(null); setAttempt((value) => value + 1); }}>Reintentar consulta</button>}
         </>}
       </section>
       <aside id="catalog-categories" className="panel category-panel" aria-labelledby="categories-title" tabIndex={-1}>
