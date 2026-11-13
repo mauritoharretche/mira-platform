@@ -58,7 +58,8 @@ fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 .page-heading { margin-bottom: 1.5rem; }
 .page-heading > .muted { font-size: .9375rem; margin-bottom: 0; }
 .catalog-page-heading { margin-bottom: 1rem; }
-.back-to-catalog { margin-top: -.5rem; margin-bottom: 1.5rem; font-size: .875rem; }
+.back-to-catalog { display: inline-flex; align-items: center; min-height: 2.75rem; margin-top: -.5rem; margin-bottom: 1rem; font-size: .875rem; }
+#catalog-products-title:target, #product-title:target { scroll-margin-top: 1rem; outline: 3px solid var(--focus); outline-offset: 3px; }
 .workspace-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 1.5rem; align-items: start; }
 .workspace-grid > .panel:first-child { max-width: 46rem; }
 .panel { min-width: 0; padding: 1.5rem; border: 1px solid var(--border); border-radius: .75rem; background: var(--surface); }
