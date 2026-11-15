@@ -33,6 +33,12 @@ from inventory.models import StockMovement, StockPosition
 _REPORT_MAX_BYTES = 4 * 1024 * 1024
 _DIAGNOSTIC_MAX_BYTES = 512
 _DIAGNOSTIC_MAX_CASES = 4
+_REPORT_MAX_SPECS = 64
+_REPORT_MAX_TESTS = 64
+_REPORT_MAX_RESULTS = 2
+_REPORT_MAX_ERRORS = 4
+_LOCATION_MAX_PATH = 1024
+_LOCATION_MAX_COLUMN = 10000
 _BROWSER_CASES = {
     # Playwright 1.65 JSON spec.file is relative to config.rootDir (testDir).
     "catalog.spec.ts": frozenset({
@@ -45,6 +51,38 @@ _BROWSER_CASES = {
     }),
 }
 _FAILED_RESULT_STATES = frozenset({"failed", "timedOut", "interrupted"})
+_TEST_OUTCOMES = frozenset({"expected", "unexpected", "flaky", "skipped"})
+
+
+def _validated_failure_line(result: dict, source_path: Path, source_line_lengths: list[int]) -> int | None:
+    """Use only Playwright 1.65's structured error locations in the known E2E file."""
+    errors = result.get("errors", [])
+    if not isinstance(errors, list) or len(errors) > _REPORT_MAX_ERRORS:
+        raise ValueError("Invalid browser error collection")
+    candidates = []
+    for error in errors:
+        if not isinstance(error, dict):
+            raise ValueError("Invalid browser error")
+        if "location" in error:
+            candidates.append(error["location"])
+    if "errorLocation" in result:
+        candidates.append(result["errorLocation"])
+    if not candidates:
+        return None
+    locations = []
+    for location in candidates:
+        if not isinstance(location, dict) or set(location) != {"file", "line", "column"}:
+            raise ValueError("Invalid browser error location")
+        file, line, column = location["file"], location["line"], location["column"]
+        if (not isinstance(file, str) or len(file) > _LOCATION_MAX_PATH
+                or file != str(source_path) or type(line) is not int
+                or not 1 <= line <= len(source_line_lengths) or type(column) is not int
+                or not 0 <= column <= min(_LOCATION_MAX_COLUMN, source_line_lengths[line - 1] + 1)):
+            raise ValueError("Untrusted browser error location")
+        locations.append((file, line, column))
+    if len(set(locations)) != 1:
+        raise ValueError("Contradictory browser error locations")
+    return locations[0][1]
 
 
 def _safe_browser_failure_summary(report_path: Path) -> str:
@@ -58,7 +96,7 @@ def _safe_browser_failure_summary(report_path: Path) -> str:
         if not isinstance(report, dict) or not isinstance(report.get("suites"), list):
             return "diagnostic_unavailable"
         pending = list(report["suites"])
-        inspected = failed_count = 0
+        inspected = failed_count = spec_count = test_count = 0
         cases = []
         while pending:
             suite = pending.pop()
@@ -67,34 +105,56 @@ def _safe_browser_failure_summary(report_path: Path) -> str:
                 return "diagnostic_unavailable"
             nested = suite.get("suites", [])
             specs = suite.get("specs", [])
-            if not isinstance(nested, list) or not isinstance(specs, list):
+            if (not isinstance(nested, list) or not isinstance(specs, list)
+                    or len(nested) + len(pending) > 128
+                    or len(specs) > _REPORT_MAX_SPECS):
+                return "diagnostic_unavailable"
+            spec_count += len(specs)
+            if spec_count > _REPORT_MAX_SPECS:
                 return "diagnostic_unavailable"
             pending.extend(nested)
             for spec in specs:
                 if not isinstance(spec, dict) or not isinstance(spec.get("tests"), list):
                     return "diagnostic_unavailable"
+                test_count += len(spec["tests"])
+                if test_count > _REPORT_MAX_TESTS:
+                    return "diagnostic_unavailable"
                 for test in spec["tests"]:
-                    if not isinstance(test, dict) or test.get("status") != "unexpected":
+                    if not isinstance(test, dict) or test.get("status") not in _TEST_OUTCOMES:
+                        return "diagnostic_unavailable"
+                    results = test.get("results")
+                    if not isinstance(results, list) or len(results) > _REPORT_MAX_RESULTS:
+                        return "diagnostic_unavailable"
+                    if test["status"] != "unexpected":
                         continue
                     file = spec.get("file")
                     title = spec.get("title")
                     line = spec.get("line")
                     project = test.get("projectName")
-                    results = test.get("results")
                     if (not isinstance(file, str) or file not in _BROWSER_CASES
                             or not isinstance(title, str) or title not in _BROWSER_CASES[file]
                             or type(line) is not int or not 1 <= line <= 10000
                             or project not in ("desktop", "mobile")
-                            or not isinstance(results, list)):
+                            or len(results) != 1 or not isinstance(results[0], dict)):
                         return "diagnostic_unavailable"
-                    states = [result.get("status") for result in results if isinstance(result, dict)]
-                    failed = [state for state in states if state in _FAILED_RESULT_STATES]
-                    if not failed:
+                    result = results[0]
+                    state = result.get("status")
+                    if state not in _FAILED_RESULT_STATES:
                         return "diagnostic_unavailable"
+                    source_path = (Path(__file__).resolve().parents[4] / "apps" / "web" / "e2e" / file).resolve(strict=True)
+                    with source_path.open(encoding="utf-8") as source:
+                        source_line_lengths = [len(text.rstrip("\r\n").encode("utf-16-le")) // 2
+                                               for text in source]
+                    if line > len(source_line_lengths):
+                        return "diagnostic_unavailable"
+                    failure_line = _validated_failure_line(result, source_path, source_line_lengths)
                     failed_count += 1
                     if len(cases) < _DIAGNOSTIC_MAX_CASES:
-                        cases.append({"project": project, "file": file, "case": title,
-                                      "line": line, "status": failed[-1]})
+                        case = {"project": project, "file": file, "case": title,
+                                "line": line, "status": state}
+                        if failure_line is not None:
+                            case["failure_line"] = failure_line
+                        cases.append(case)
         if not failed_count:
             return "diagnostic_unavailable"
         summary = json.dumps({"failed_count": failed_count, "cases": cases,
@@ -133,6 +193,15 @@ class BrowserFailureDiagnosticsTests(unittest.TestCase):
                    "errors": [secret]}
         self.report_path.write_text(json.dumps(payload))
 
+    def location(self, *, file="catalog.spec.ts", line=200, column=4):
+        source = (Path(__file__).resolve().parents[4] / "apps" / "web" / "e2e" / file).resolve()
+        return {"file": str(source), "line": line, "column": column}
+
+    def set_result(self, **changes):
+        report = json.loads(self.report_path.read_text())
+        report["suites"][0]["specs"][0]["tests"][0]["results"][0].update(changes)
+        self.report_path.write_text(json.dumps(report))
+
     def test_known_failure_is_bounded_and_redacted(self):
         self.report()
         result = _safe_browser_failure_summary(self.report_path)
@@ -141,6 +210,101 @@ class BrowserFailureDiagnosticsTests(unittest.TestCase):
             "file": "catalog.spec.ts", "case": "catalog-journey", "line": 171,
             "status": "timedOut"}])
         self.assertNotIn("fictional-secret-must-not-appear", result)
+
+    def test_structured_error_location_reports_only_a_validated_line(self):
+        self.report()
+        self.set_result(errors=[{"location": self.location(),
+                                 "message": "fictional-secret-must-not-appear",
+                                 "stack": "fictional-secret-must-not-appear"}])
+        result = _safe_browser_failure_summary(self.report_path)
+        self.assertEqual(json.loads(result)["cases"][0]["failure_line"], 200)
+        self.assertNotIn("fictional-secret-must-not-appear", result)
+        self.assertLessEqual(len(result.encode("ascii")), _DIAGNOSTIC_MAX_BYTES)
+
+    def test_result_error_location_alone_is_valid(self):
+        self.report()
+        self.set_result(errorLocation=self.location())
+        self.assertEqual(json.loads(_safe_browser_failure_summary(self.report_path))
+                         ["cases"][0]["failure_line"], 200)
+
+    def test_free_text_and_unapproved_location_field_are_ignored(self):
+        self.report()
+        self.set_result(error={"location": self.location(),
+                               "message": "fictional-secret-must-not-appear",
+                               "stack": "fictional-secret-must-not-appear"})
+        result = _safe_browser_failure_summary(self.report_path)
+        self.assertNotIn("failure_line", json.loads(result)["cases"][0])
+        self.assertNotIn("fictional-secret-must-not-appear", result)
+
+    def test_matching_structured_locations_are_valid(self):
+        self.report()
+        location = self.location()
+        self.set_result(errors=[{"location": location}], errorLocation=location)
+        self.assertEqual(json.loads(_safe_browser_failure_summary(self.report_path))
+                         ["cases"][0]["failure_line"], 200)
+
+    def test_conflicting_structured_locations_are_unavailable(self):
+        for other in (self.location(line=201), self.location(column=5)):
+            self.report()
+            self.set_result(errors=[{"location": self.location()}], errorLocation=other)
+            self.assertEqual(_safe_browser_failure_summary(self.report_path), "diagnostic_unavailable")
+
+    def test_untrusted_error_paths_are_unavailable(self):
+        expected = self.location()["file"]
+        for file in ("catalog.spec.ts", "/private/tmp/catalog.spec.ts",
+                     expected.replace("/e2e/", "/e2e/../e2e/"),
+                     expected.replace("/e2e/", "/e2e/./"),
+                     "file://" + expected, expected + "fictional-secret-must-not-appear"):
+            self.report()
+            self.set_result(errorLocation=self.location() | {"file": file})
+            result = _safe_browser_failure_summary(self.report_path)
+            self.assertEqual(result, "diagnostic_unavailable")
+            self.assertNotIn("fictional-secret-must-not-appear", result)
+
+    def test_invalid_error_lines_and_columns_are_unavailable(self):
+        source = Path(self.location()["file"])
+        with source.open(encoding="utf-8") as content:
+            lines = list(content)
+        past_end = len(lines) + 1
+        past_column = len(lines[199].rstrip("\r\n").encode("utf-16-le")) // 2 + 2
+        for line in (True, -1, 0, past_end, "200"):
+            self.report()
+            self.set_result(errorLocation=self.location(line=line))
+            self.assertEqual(_safe_browser_failure_summary(self.report_path), "diagnostic_unavailable")
+        for column in (True, -1, 10001, past_column, "4"):
+            self.report()
+            self.set_result(errorLocation=self.location(column=column))
+            self.assertEqual(_safe_browser_failure_summary(self.report_path), "diagnostic_unavailable")
+
+    def test_malformed_error_locations_are_unavailable(self):
+        for location in (None, "fictional-secret-must-not-appear",
+                         {"file": self.location()["file"], "line": 200},
+                         self.location() | {"secret": "fictional-secret-must-not-appear"}):
+            self.report()
+            self.set_result(errorLocation=location)
+            self.assertEqual(_safe_browser_failure_summary(self.report_path), "diagnostic_unavailable")
+        self.report()
+        self.set_result(errors=["fictional-secret-must-not-appear"])
+        self.assertEqual(_safe_browser_failure_summary(self.report_path), "diagnostic_unavailable")
+
+    def test_oversized_internal_collections_are_unavailable(self):
+        self.report()
+        report = json.loads(self.report_path.read_text())
+        spec = report["suites"][0]["specs"][0]
+        test = spec["tests"][0]
+        result = test["results"][0]
+        for change in (
+            lambda r: r["suites"][0].update(specs=[spec] * (_REPORT_MAX_SPECS + 1)),
+            lambda r: r["suites"][0]["specs"][0].update(tests=[test] * (_REPORT_MAX_TESTS + 1)),
+            lambda r: r["suites"][0]["specs"][0]["tests"][0].update(
+                results=[result] * (_REPORT_MAX_RESULTS + 1)),
+            lambda r: r["suites"][0]["specs"][0]["tests"][0]["results"][0].update(
+                errors=[{}] * (_REPORT_MAX_ERRORS + 1)),
+        ):
+            current = json.loads(json.dumps(report))
+            change(current)
+            self.report_path.write_text(json.dumps(current))
+            self.assertEqual(_safe_browser_failure_summary(self.report_path), "diagnostic_unavailable")
 
     def test_playwright_165_json_report_with_test_dir_reports_known_failure(self):
         # Shape observed from Playwright 1.65.0's JSON reporter with testDir="./e2e".
@@ -197,11 +361,13 @@ class BrowserFailureDiagnosticsTests(unittest.TestCase):
 
     def test_exit_code_preserved_and_raw_report_removed(self):
         self.report()
+        self.set_result(errorLocation=self.location())
         output = StringIO()
         with redirect_stdout(output), self.assertRaises(AssertionError):
             _assert_browser_exit(self, Mock(wait=Mock(return_value=1)), self.report_path,
                                  Path(self.temporary.name))
         self.assertIn("MIRA_BROWSER_FAILURE=", output.getvalue())
+        self.assertIn('"failure_line":200', output.getvalue())
         self.assertNotIn("fictional-secret-must-not-appear", output.getvalue())
         self.assertFalse(self.report_path.exists())
         self.report()
