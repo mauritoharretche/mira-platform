@@ -1,6 +1,7 @@
 """Browser lifecycle belongs exclusively to the native isolated Django runner."""
 import json
 from contextlib import redirect_stdout
+from datetime import datetime, timedelta
 from io import StringIO
 import os
 from pathlib import Path
@@ -13,7 +14,7 @@ import tempfile
 from threading import Thread
 import time
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from urllib.request import urlopen
 
 from django.conf import settings
@@ -23,9 +24,11 @@ from django.contrib.sessions.models import Session
 from django.db import connection
 from django.test import LiveServerTestCase, override_settings
 from django.utils import timezone
+from django.utils.crypto import salted_hmac
 
 from audit.models import CatalogAuditEntry, CatalogChangeAuditEntry, InventoryMovementAuditEntry
 from catalog.models import Category, Product, Variant
+from identity.models import LoginAttemptWindow
 from identity.tests.test_http_authentication import PERMISSIONS
 from inventory.models import StockMovement, StockPosition
 
@@ -43,7 +46,7 @@ _BROWSER_CASES = {
     # Playwright 1.65 JSON spec.file is relative to config.rootDir (testDir).
     "catalog.spec.ts": frozenset({
         "catalog-journey", "catalog-readonly", "catalog-revoked", "catalog-stale",
-        "catalog-lost-category", "catalog-lost-change",
+        "catalog-lost-category", "catalog-lost-change", "catalog-variants", "catalog-variants-lost",
     }),
     "operations.spec.ts": frozenset({
         "journey", "csrf", "denied", "revoked", "duplicate", "lost-creation",
@@ -52,6 +55,80 @@ _BROWSER_CASES = {
 }
 _FAILED_RESULT_STATES = frozenset({"failed", "timedOut", "interrupted"})
 _TEST_OUTCOMES = frozenset({"expected", "unexpected", "flaky", "skipped"})
+_GLOBAL_LOGIN_LIMIT = 30
+_GLOBAL_LOGIN_WINDOW = timedelta(seconds=60)
+_LOGIN_RESERVATIONS_PER_PROJECT = 16
+
+
+def _login_capacity(window, now):
+    """Interpret only the real global budget; never create or reset its row."""
+    if (not isinstance(window, tuple) or len(window) != 2
+            or type(window[0]) is not int or not 1 <= window[0] <= _GLOBAL_LOGIN_LIMIT
+            or not isinstance(window[1], datetime) or not timezone.is_aware(window[1])
+            or not isinstance(now, datetime) or not timezone.is_aware(now)):
+        raise AssertionError("Invalid global login budget")
+    attempts, expires_at = window
+    remaining = (expires_at - now).total_seconds()
+    if remaining > _GLOBAL_LOGIN_WINDOW.total_seconds():
+        raise AssertionError("Contradictory global login expiry")
+    return (_GLOBAL_LOGIN_LIMIT if remaining <= 0 else _GLOBAL_LOGIN_LIMIT - attempts,
+            max(0.0, remaining))
+
+
+def _wait_for_login_capacity(read_window, *, required, deadline,
+                             now=timezone.now, monotonic=time.monotonic, wait=time.sleep):
+    if type(required) is not int or not 1 <= required <= _GLOBAL_LOGIN_LIMIT:
+        raise AssertionError("Invalid browser login reservation count")
+    started = monotonic()
+    barrier_deadline = min(deadline, started + _GLOBAL_LOGIN_WINDOW.total_seconds() + 5)
+    original = read_window()
+    before, remaining = _login_capacity(original, now())
+    if before >= required:
+        return {"before_available": before, "after_available": before, "waited_seconds": 0.0}
+    while True:
+        if monotonic() + remaining > barrier_deadline:
+            raise AssertionError("Global login budget deadline exceeded")
+        wait(remaining)  # The stored expiry, never an arbitrary delay or retry.
+        current = read_window()
+        if current != original:
+            raise AssertionError("Global login budget changed during barrier")
+        after, remaining = _login_capacity(current, now())
+        if after >= required:
+            return {"before_available": before, "after_available": after,
+                    "waited_seconds": monotonic() - started}
+        if monotonic() >= barrier_deadline:
+            raise AssertionError("Global login budget deadline exceeded")
+
+
+def _read_global_login_window(test):
+    assert_browser_database(test)
+    key = salted_hmac("mira.operator.login.global", "global", algorithm="sha256").hexdigest()
+    try:
+        window = LoginAttemptWindow.objects.only("attempts", "expires_at").get(pk=key)
+    except LoginAttemptWindow.DoesNotExist:
+        return None
+    return window.attempts, window.expires_at
+
+
+def _stop_owned_process(process):
+    if process is None:
+        return
+    import signal
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=5)
+
+
+def _run_project_sequence(run_project, between_projects):
+    run_project("desktop")
+    between_projects()
+    run_project("mobile")
 
 
 def _validated_failure_line(result: dict, source_path: Path, source_line_lengths: list[int]) -> int | None:
@@ -173,6 +250,86 @@ def _assert_browser_exit(test: unittest.TestCase, browser, report_path: Path, ar
         test.assertEqual(exit_code, 0, f"Browser failure; inspect {artifacts}/browser.log")
     finally:
         report_path.unlink(missing_ok=True)
+
+
+class BrowserLoginBudgetTests(unittest.TestCase):
+    """Pure orchestration tests: no database, browser, or real waiting."""
+
+    def setUp(self):
+        self.start = timezone.now()
+        self.elapsed = 0.0
+        self.waits = []
+
+    def now(self):
+        return self.start + timedelta(seconds=self.elapsed)
+
+    def monotonic(self):
+        return self.elapsed
+
+    def wait(self, seconds):
+        self.waits.append(seconds)
+        self.elapsed += seconds
+
+    def budget(self, window, *, deadline=420):
+        return _wait_for_login_capacity(lambda: window, required=_LOGIN_RESERVATIONS_PER_PROJECT,
+                                        deadline=deadline, now=self.now,
+                                        monotonic=self.monotonic, wait=self.wait)
+
+    def test_capacity_sufficient_does_not_wait(self):
+        result = self.budget((14, self.start + _GLOBAL_LOGIN_WINDOW))
+        self.assertEqual(result, {"before_available": 16, "after_available": 16, "waited_seconds": 0.0})
+        self.assertEqual(self.waits, [])
+
+    def test_insufficient_capacity_waits_for_actual_expiry(self):
+        expiry = self.start + timedelta(seconds=43)
+        result = self.budget((16, expiry))
+        self.assertEqual(result, {"before_available": 14, "after_available": 30, "waited_seconds": 43.0})
+        self.assertEqual(self.waits, [43.0])
+
+    def test_expired_window_does_not_wait(self):
+        self.assertEqual(self.budget((30, self.start - timedelta(seconds=1)))["after_available"], 30)
+        self.assertEqual(self.waits, [])
+
+    def test_missing_invalid_or_contradictory_window_fails_closed(self):
+        for window in (None, (0, self.start), (31, self.start), (True, self.start),
+                       (16, self.start.replace(tzinfo=None)),
+                       (16, self.start + timedelta(seconds=61))):
+            with self.subTest(window=type(window).__name__), self.assertRaises(AssertionError):
+                self.budget(window)
+        self.assertEqual(self.waits, [])
+
+    def test_global_deadline_exceeded_without_wait(self):
+        with self.assertRaisesRegex(AssertionError, "deadline"):
+            self.budget((16, self.start + timedelta(seconds=43)), deadline=40)
+        self.assertEqual(self.waits, [])
+
+    def test_interference_during_wait_fails_closed(self):
+        first = (16, self.start + timedelta(seconds=43))
+        read = Mock(side_effect=[first, (17, first[1])])
+        with self.assertRaisesRegex(AssertionError, "changed"):
+            _wait_for_login_capacity(read, required=16, deadline=420,
+                                     now=self.now, monotonic=self.monotonic, wait=self.wait)
+        self.assertEqual(self.waits, [43.0])
+
+    def test_desktop_failure_prevents_mobile_and_mobile_failure_is_not_hidden(self):
+        run = Mock(side_effect=AssertionError("desktop failed"))
+        between = Mock()
+        with self.assertRaisesRegex(AssertionError, "desktop failed"):
+            _run_project_sequence(run, between)
+        run.assert_called_once_with("desktop")
+        between.assert_not_called()
+        run = Mock(side_effect=[None, AssertionError("mobile failed")])
+        with self.assertRaisesRegex(AssertionError, "mobile failed"):
+            _run_project_sequence(run, between)
+        self.assertEqual([call.args[0] for call in run.call_args_list], ["desktop", "mobile"])
+
+    def test_owned_process_cleanup_on_timeout(self):
+        process = Mock(pid=12345)
+        process.wait.side_effect = [subprocess.TimeoutExpired("browser", 10), 0]
+        with patch("os.killpg") as kill:
+            _stop_owned_process(process)
+        self.assertEqual(kill.call_count, 2)
+        self.assertEqual(process.wait.call_count, 2)
 
 
 class BrowserFailureDiagnosticsTests(unittest.TestCase):
@@ -354,7 +511,7 @@ class BrowserFailureDiagnosticsTests(unittest.TestCase):
         self.report_path.write_text(json.dumps(report))
         result = _safe_browser_failure_summary(self.report_path)
         self.assertLessEqual(len(result.encode("ascii")), _DIAGNOSTIC_MAX_BYTES)
-        self.assertEqual(json.loads(result)["failed_count"], 6)
+        self.assertEqual(json.loads(result)["failed_count"], len(_BROWSER_CASES["catalog.spec.ts"]))
         self.assertEqual(len(json.loads(result)["cases"]), _DIAGNOSTIC_MAX_CASES)
         self.assertTrue(json.loads(result)["truncated"])
         self.assertNotIn("fictional-secret-must-not-appear", result)
@@ -415,7 +572,7 @@ class OperatorBrowserTests(LiveServerTestCase):
         from django.contrib.auth.models import Permission
         for project in ("desktop", "mobile"):
             for scenario in ("journey", "csrf", "denied", "revoked", "duplicate", "lost-creation", "lost-receipt", "expired",
-                             "catalog-journey", "catalog-readonly", "catalog-revoked", "catalog-stale", "catalog-lost-category", "catalog-lost-change"):
+                             "catalog-journey", "catalog-readonly", "catalog-revoked", "catalog-stale", "catalog-lost-category", "catalog-lost-change", "catalog-variants", "catalog-variants-lost"):
                 username = f"fictional-{project}-{scenario}"
                 user = get_user_model()(username=username)
                 validate_password(password, user=user)
@@ -441,7 +598,7 @@ class OperatorBrowserTests(LiveServerTestCase):
                 name = f"Fictional {project} Navigation {suffix}"
                 categories[suffix] = Category.objects.create(name=name, name_key=name.casefold())
             fixture_categories[project] = categories
-            for scenario in ("catalog-readonly", "catalog-revoked", "catalog-stale", "catalog-lost-change"):
+            for scenario in ("catalog-readonly", "catalog-revoked", "catalog-stale", "catalog-lost-change", "catalog-variants", "catalog-variants-lost"):
                 category = categories["B"] if scenario in ("catalog-readonly", "catalog-revoked") else categories["A"] if scenario == "catalog-stale" else None
                 product = Product.objects.create(name=f"Fictional {project} {scenario}", category=category)
                 Variant.objects.create(product=product, label="Fictional fixture", sku=f"CATALOG-FIXTURE-{project}-{scenario}")
@@ -450,7 +607,7 @@ class OperatorBrowserTests(LiveServerTestCase):
                 product = Product.objects.create(name=f"Fictional {project} Page {index:03}", category=categories["A"])
                 Variant.objects.create(product=product, label="Fictional page fixture", sku=f"CATALOG-FIXTURE-{project}-page-{index}")
         fixture_count = Product.objects.count()
-        self.assertEqual(fixture_count, 110)
+        self.assertEqual(fixture_count, 114)
         # No PostgreSQL/Django secret is passed to Next or Playwright.
         env = {key: os.environ[key] for key in ("PATH", "HOME", "TMPDIR", "PLAYWRIGHT_BROWSERS_PATH") if key in os.environ}
         env.update(MIRA_API_BASE_URL=self.live_server_url.replace("localhost", "127.0.0.1"), NEXT_TELEMETRY_DISABLED="1",
@@ -458,14 +615,15 @@ class OperatorBrowserTests(LiveServerTestCase):
                    MIRA_E2E_PASSWORD=password, MIRA_RUN_BROWSER_TESTS="1")
         pnpm = shutil.which("pnpm")
         self.assertIsNotNone(pnpm, "Locked pnpm must be available; do not install a global replacement")
+        self.assertEqual(_LOGIN_RESERVATIONS_PER_PROJECT, sum(len(cases) for cases in _BROWSER_CASES.values()))
+        self.assertFalse(LoginAttemptWindow.objects.exists(), "Unexpected pre-existing browser login budget")
+        print("BROWSER_LOGIN_BUDGET_INITIAL=30", flush=True)
         server = browser = None
-        report_path = artifacts / "playwright-report.json"
-        browser_env = {**env, "PLAYWRIGHT_JSON_OUTPUT_FILE": str(report_path)}
+        browsers = []
+        report_paths = {project: artifacts / f"playwright-{project}.json" for project in ("desktop", "mobile")}
         with override_settings(OPERATOR_HTTP_ENABLED=True, OPERATOR_PUBLIC_ORIGIN=origin,
                                CSRF_TRUSTED_ORIGINS=[origin], SESSION_COOKIE_SECURE=False, CSRF_COOKIE_SECURE=False):
             try:
-                report_fd = os.open(report_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-                os.close(report_fd)
                 with artifacts.joinpath("build.log").open("w") as log:
                     subprocess.run([pnpm, "build"], cwd=web, env=env, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=180)
                 with artifacts.joinpath("next.log").open("w") as server_log:
@@ -482,56 +640,81 @@ class OperatorBrowserTests(LiveServerTestCase):
                             time.sleep(.1)
                     else:
                         self.fail("Isolated Next server readiness deadline exceeded")
-                    browser = subprocess.Popen([pnpm, "exec", "playwright", "test", "--reporter=list,json"], cwd=web, env=browser_env,
-                                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
-                    lines = Queue()
-                    def consume():
-                        for line in browser.stdout:
-                            lines.put(line)
-                    reader = Thread(target=consume, daemon=True)
-                    reader.start()
-                    deadline = time.monotonic() + 420
-                    with artifacts.joinpath("browser.log").open("w") as log:
-                        while reader.is_alive() or not lines.empty() or browser.poll() is None:
-                            if time.monotonic() > deadline:
-                                self.fail("Browser suite exceeded its bounded deadline")
+                    browser_deadline = time.monotonic() + 420
+
+                    def run_project(project):
+                        nonlocal browser
+                        self.assertLess(time.monotonic(), browser_deadline, "Browser suite exceeded its bounded deadline")
+                        self.assertIsNone(server.poll(), "Isolated Next server exited")
+                        report_path = report_paths[project]
+                        report_fd = os.open(report_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                        os.close(report_fd)
+                        try:
+                            browser_env = {**env, "PLAYWRIGHT_JSON_OUTPUT_FILE": str(report_path)}
+                            browser = subprocess.Popen([pnpm, "exec", "playwright", "test", f"--project={project}",
+                                                        "--reporter=list,json"], cwd=web, env=browser_env,
+                                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                                       start_new_session=True)
+                            browsers.append(browser)
+                            lines = Queue()
+                            def consume():
+                                for line in browser.stdout:
+                                    lines.put(line)
+                            reader = Thread(target=consume, daemon=True)
+                            reader.start()
+                            with artifacts.joinpath("browser.log").open("a") as log:
+                                log.write(f"BROWSER_BATCH={project}\n")
+                                while reader.is_alive() or not lines.empty() or browser.poll() is None:
+                                    if time.monotonic() > browser_deadline:
+                                        self.fail("Browser suite exceeded its bounded deadline")
+                                    try:
+                                        line = lines.get(timeout=.2)
+                                    except Empty:
+                                        continue
+                                    log.write(line)
+                                    log.flush()
+                                    if "MIRA_BROWSER_CONTROL=" in line:
+                                        # Test-process IPC, never an HTTP endpoint or runtime adapter.
+                                        command = json.loads(line.partition("MIRA_BROWSER_CONTROL=")[2])
+                                        username, action = command["username"], command["action"]
+                                        self.assertIn(username, accounts)
+                                        self.assertIn(action, {"revoke", "expire"})
+                                        assert_browser_database(self)
+                                        if action == "revoke":
+                                            get_user_model().objects.get(pk=accounts[username]).user_permissions.clear()
+                                        else:
+                                            for session in Session.objects.all():
+                                                if session.get_decoded().get("_auth_user_id") == str(accounts[username]):
+                                                    session.expire_date = timezone.now()
+                                                    session.save(update_fields=["expire_date"])
+                                        artifacts.joinpath(f"{action}-{username}.ack").touch()
+                            _assert_browser_exit(self, browser, report_path, artifacts)
+                            self.assertLessEqual(time.monotonic(), browser_deadline, "Browser suite exceeded its bounded deadline")
+                            print(f"BROWSER_BATCH_PASS={project}", flush=True)
+                        finally:
                             try:
-                                line = lines.get(timeout=.2)
-                            except Empty:
-                                continue
-                            log.write(line)
-                            log.flush()
-                            if "MIRA_BROWSER_CONTROL=" in line:
-                                # Test-process IPC, never an HTTP endpoint or runtime adapter.
-                                command = json.loads(line.partition("MIRA_BROWSER_CONTROL=")[2])
-                                username, action = command["username"], command["action"]
-                                self.assertIn(username, accounts)
-                                self.assertIn(action, {"revoke", "expire"})
-                                assert_browser_database(self)
-                                if action == "revoke":
-                                    get_user_model().objects.get(pk=accounts[username]).user_permissions.clear()
-                                else:
-                                    for session in Session.objects.all():
-                                        if session.get_decoded().get("_auth_user_id") == str(accounts[username]):
-                                            session.expire_date = timezone.now()
-                                            session.save(update_fields=["expire_date"])
-                                artifacts.joinpath(f"{action}-{username}.ack").touch()
-                    _assert_browser_exit(self, browser, report_path, artifacts)
+                                _stop_owned_process(browser)
+                            finally:
+                                browser = None
+                                report_path.unlink(missing_ok=True)
+
+                    def between_projects():
+                        self.assertIsNone(server.poll(), "Isolated Next server exited")
+                        budget = _wait_for_login_capacity(lambda: _read_global_login_window(self),
+                                                          required=_LOGIN_RESERVATIONS_PER_PROJECT,
+                                                          deadline=browser_deadline)
+                        print("BROWSER_LOGIN_BUDGET=" + json.dumps(budget, sort_keys=True), flush=True)
+
+                    _run_project_sequence(run_project, between_projects)
             finally:
-                import signal
-                for process in (browser, server):
-                    if process is not None:
-                        # Stop only process groups created here, including Next's child.
-                        try:
-                            os.killpg(process.pid, signal.SIGTERM)
-                        except ProcessLookupError:
-                            pass
-                        try:
-                            process.wait(timeout=10)
-                        except subprocess.TimeoutExpired:
-                            os.killpg(process.pid, signal.SIGKILL)
-                            process.wait(timeout=5)
-                report_path.unlink(missing_ok=True)
+                try:
+                    try:
+                        _stop_owned_process(browser)
+                    finally:
+                        _stop_owned_process(server)
+                finally:
+                    for report_path in report_paths.values():
+                        report_path.unlink(missing_ok=True)
                 if server is not None:
                     released = False
                     deadline = time.monotonic() + 5
@@ -543,9 +726,10 @@ class OperatorBrowserTests(LiveServerTestCase):
                         time.sleep(.1)
                     self.assertTrue(released, "Isolated frontend port remained bound after cleanup")
                     artifacts.joinpath("lifecycle.json").write_text(json.dumps({
-                        "frontend_pid": server.pid, "browser_pid": browser.pid if browser else None,
+                        "frontend_pid": server.pid, "browser_pid": browsers[-1].pid if browsers else None,
+                        "browser_pids": [process.pid for process in browsers],
                         "frontend_port": port, "frontend_stopped": server.poll() is not None,
-                        "browser_stopped": browser is None or browser.poll() is not None,
+                        "browser_stopped": all(process.poll() is not None for process in browsers),
                         "frontend_port_released": released,
                     }, sort_keys=True))
         legacy_variants = Variant.objects.filter(sku__startswith="FICTIONAL-")
@@ -553,11 +737,11 @@ class OperatorBrowserTests(LiveServerTestCase):
         self.assertEqual(legacy_variants.count(), 10)
         self.assertEqual(CatalogAuditEntry.objects.filter(variant_id__in=legacy_variants.values("id")).count(), 10)
         self.assertEqual(Product.objects.count(), fixture_count + 12)
-        self.assertEqual(Variant.objects.count(), fixture_count + 12)
-        self.assertEqual(CatalogAuditEntry.objects.count(), 12)
-        self.assertEqual(StockPosition.objects.count(), 6)
-        self.assertEqual(StockMovement.objects.count(), 6)
-        self.assertEqual(InventoryMovementAuditEntry.objects.count(), 6)
+        self.assertEqual(Variant.objects.count(), fixture_count + 16)
+        self.assertEqual(CatalogAuditEntry.objects.count(), 16)
+        self.assertEqual(StockPosition.objects.count(), 8)
+        self.assertEqual(StockMovement.objects.count(), 8)
+        self.assertEqual(InventoryMovementAuditEntry.objects.count(), 8)
         for variant in legacy_variants:
             audit = CatalogAuditEntry.objects.get(variant_id=variant.pk)
             owner = variant.sku.removeprefix("FICTIONAL-")
@@ -567,10 +751,10 @@ class OperatorBrowserTests(LiveServerTestCase):
             audit = InventoryMovementAuditEntry.objects.get(movement_id=movement.pk)
             self.assertEqual((position.on_hand, position.version, movement.sequence, movement.quantity_after), (12, 1, 1, 12))
             self.assertEqual(audit.actor_id, CatalogAuditEntry.objects.get(variant_id=position.variant_id).actor_id)
-        print("BROWSER_PERSISTENCE_PASS: 10 creations, 6 positions/movements/audits; lost responses did not duplicate writes", flush=True)
+        print("BROWSER_PERSISTENCE_PASS: 10 creations, 8 positions/movements/audits; lost responses did not duplicate writes", flush=True)
 
         self.assertEqual(Category.objects.count(), 8)
-        self.assertEqual(CatalogChangeAuditEntry.objects.count(), 18)
+        self.assertEqual(CatalogChangeAuditEntry.objects.count(), 22)
         for project in ("desktop", "mobile"):
             actor = str(accounts[f"fictional-{project}-catalog-journey"])
             entries = list(CatalogChangeAuditEntry.objects.filter(actor_id=actor).order_by("occurred_at"))
@@ -600,3 +784,25 @@ class OperatorBrowserTests(LiveServerTestCase):
             for scenario in ("catalog-readonly", "catalog-revoked", "catalog-stale"):
                 self.assertFalse(CatalogChangeAuditEntry.objects.filter(actor_id=str(accounts[f"fictional-{project}-{scenario}"])).exists())
         print("CATALOG_BROWSER_PERSISTENCE_PASS: 2 creations, 4 category creations, 18 changes/audits; no-op and lost responses did not duplicate writes", flush=True)
+
+        for project in ("desktop", "mobile"):
+            for scenario, suffix in (("catalog-variants", "confirmed"), ("catalog-variants-lost", "lost")):
+                product = fixture_products[project, scenario]
+                self.assertEqual(product.variants.count(), 2)
+                variant = Variant.objects.get(sku=f"BC01A-{project}-{suffix}")
+                entry = CatalogAuditEntry.objects.get(variant_id=variant.pk)
+                self.assertEqual((entry.action, entry.product_id, entry.actor_id),
+                                 ("catalog.variant_added_to_product", product.pk, str(accounts[f"fictional-{project}-{scenario}"])))
+                product.refresh_from_db()
+                if suffix == "confirmed":
+                    self.assertTrue(product.is_active)
+                    self.assertEqual(product.category_id, fixture_categories[project]["B"].id)
+                    self.assertEqual(CatalogChangeAuditEntry.objects.filter(target_id=product.pk, actor_id=entry.actor_id).count(), 2)
+                if suffix == "lost":
+                    self.assertFalse(StockPosition.objects.filter(variant_id=variant.pk).exists())
+                else:
+                    self.assertEqual(StockPosition.objects.get(variant_id=variant.pk).on_hand, 12)
+                from catalog.models import VariantPriceRevision, VariantMeasurementSpec
+                self.assertFalse(VariantPriceRevision.objects.filter(variant_id=variant.pk).exists())
+                self.assertFalse(VariantMeasurementSpec.objects.filter(variant_id=variant.pk).exists())
+        print("VARIANT_BROWSER_PERSISTENCE_PASS: 4 additions/audits; only explicit receipts, no price or measurement", flush=True)

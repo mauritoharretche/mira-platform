@@ -1,6 +1,7 @@
 import { expect, Page, test, TestInfo } from "@playwright/test";
 import { existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { OperationPermitCoordinator } from "../src/components/product-workspace";
 
 const root = "/api/v1/operator";
 const password = process.env.MIRA_E2E_PASSWORD!;
@@ -175,6 +176,16 @@ async function createCategory(page: Page, name: string) {
 }
 
 test("catalog-journey", async ({ page }, info) => {
+  const permits = new OperationPermitCoordinator();
+  const old = permits.acquire("classification", "first-product");
+  expect(old).not.toBeNull();
+  expect(permits.acquire("variant", "first-product")).toBeNull();
+  expect(permits.release(old!)).toBe(true);
+  const current = permits.acquire("stock", "second-product");
+  expect(current).not.toBeNull();
+  expect(permits.release(old!)).toBe(false); // a late completion cannot unlock another operation
+  expect(permits.busy).toBe(true);
+  expect(permits.release(current!)).toBe(true);
   await login(page, info);
   await page.getByRole("navigation").getByRole("link", { name: "Nuevo producto", exact: true }).click();
   await page.getByLabel("Nombre del producto", { exact: true }).fill(`Fictional ${info.project.name} browser catalog`);
@@ -210,7 +221,35 @@ test("catalog-journey", async ({ page }, info) => {
   await page.getByLabel("Categoría del producto").selectOption("");
   await page.getByRole("button", { name: "Guardar categoría", exact: true }).click();
   await expect(page.locator(".classification-panel").getByRole("status")).toContainText("Clasificación guardada");
-  await page.getByRole("button", { name: "Guardar categoría", exact: true }).click(); // authorized no-op
+  const productId = new URL(page.url()).pathname.split("/").at(-1)!;
+  const categoryWrite = `**/api/v1/operator/catalog/products/${productId}/category`;
+  const form = page.locator(".classification-panel form");
+  let noopProcessed!: () => void;
+  const noopReady = new Promise<void>((resolve) => { noopProcessed = resolve; });
+  let releaseNoop!: () => void;
+  const noopHeld = new Promise<void>((resolve) => { releaseNoop = resolve; });
+  let noopStatus: number | null = null;
+  await page.route(categoryWrite, async (route) => {
+    if (route.request().method() !== "POST") { await route.continue(); return; }
+    const response = await route.fetch();
+    noopStatus = response.status();
+    noopProcessed();
+    await noopHeld;
+    await route.fulfill({ response });
+  });
+  try {
+    await page.getByRole("button", { name: "Guardar categoría", exact: true }).click(); // authorized no-op
+    await noopReady;
+    expect(noopStatus).toBe(200);
+    await expect(form).toHaveAttribute("aria-busy", "true");
+    releaseNoop();
+    await expect(form).toHaveAttribute("aria-busy", "false");
+    await expect(page.getByLabel("Categoría del producto")).toHaveValue("");
+    await expect(page.locator(".classification-panel .saved-category strong")).toHaveText("Sin categoría");
+  } finally {
+    releaseNoop();
+    await page.unroute(categoryWrite);
+  }
   await expect(page.getByText("Activo no significa publicado, disponible ni vendible.", { exact: false })).toBeVisible();
   const optionValue = async (label: string) => page.getByLabel("Categoría del producto").locator("option", { hasText: label }).getAttribute("value");
   const categoryA = (await optionValue(categoryName(info, "A")))!;
@@ -220,6 +259,7 @@ test("catalog-journey", async ({ page }, info) => {
   async function scriptedServerCategory(categoryId: string) {
     await page.unroute(detail);
     await page.route(detail, async (route) => {
+      if (route.request().method() !== "GET") { await route.continue(); return; }
       const response = await route.fetch();
       const data = await response.json();
       data.category_id = categoryId;
@@ -239,6 +279,7 @@ test("catalog-journey", async ({ page }, info) => {
   const oldReady = new Promise<void>((resolve) => { oldStarted = resolve; });
   let detailReads = 0;
   await page.route(detail, async (route) => {
+    if (route.request().method() !== "GET") { await route.continue(); return; }
     const response = await route.fetch();
     const data = await response.json();
     detailReads += 1;
@@ -260,6 +301,76 @@ test("catalog-journey", async ({ page }, info) => {
   await expect(page.getByLabel("Categoría del producto")).toHaveValue(categoryCreated);
   await expect(page.getByText("Selección local sin guardar.")).toHaveCount(0);
   await page.unroute(detail);
+  const categoryWriteForProduct = `**/api/v1/operator/catalog/products/${new URL(page.url()).pathname.split("/").at(-1)!}/category`;
+  async function concurrentReadAndNoop(staleCategory: string, savedLabel: string, releaseReadAfterPost: boolean) {
+    let readStarted!: () => void;
+    const readReady = new Promise<void>((resolve) => { readStarted = resolve; });
+    let releaseRead!: () => void;
+    const readHeld = new Promise<void>((resolve) => { releaseRead = resolve; });
+    let readFinished!: () => void;
+    const readDone = new Promise<void>((resolve) => { readFinished = resolve; });
+    await page.route(detail, async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      try {
+        const response = await route.fetch();
+        const data = await response.json();
+        data.category_id = staleCategory;
+        readStarted();
+        await readHeld;
+        await route.fulfill({ response, json: data }).catch(() => { /* invalidated GET may be aborted */ });
+      } finally { readFinished(); }
+    });
+    let postStarted!: () => void;
+    const postReady = new Promise<void>((resolve) => { postStarted = resolve; });
+    let releasePost!: () => void;
+    const postHeld = new Promise<void>((resolve) => { releasePost = resolve; });
+    let postStatus: number | null = null;
+    try {
+      await page.getByRole("button", { name: "Actualizar detalle", exact: true }).click();
+      await readReady;
+      await page.getByLabel("Categoría del producto").selectOption("");
+      await page.route(categoryWriteForProduct, async (route) => {
+        if (route.request().method() !== "POST") return route.continue();
+        const response = await route.fetch();
+        postStatus = response.status();
+        postStarted();
+        await postHeld;
+        await route.fulfill({ response });
+      });
+      await page.getByRole("button", { name: "Guardar categoría", exact: true }).click();
+      await postReady;
+      expect(postStatus).toBe(200);
+      await expect(page.locator(".classification-panel form")).toHaveAttribute("aria-busy", "true");
+      await expect(page.getByRole("button", { name: "Actualizar detalle", exact: true })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Agregar variante", exact: true })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Registrar recepción inicial", exact: true })).toBeDisabled();
+      if (!releaseReadAfterPost) {
+        releaseRead(); await readDone;
+        await expect(page.locator(".saved-category strong")).toHaveText(savedLabel);
+      }
+      releasePost();
+      await expect(page.locator(".classification-panel form")).toHaveAttribute("aria-busy", "false");
+      await expect(page.locator(".saved-category strong")).toHaveText("Sin categoría");
+      await expect(page.getByLabel("Categoría del producto")).toHaveValue("");
+      if (releaseReadAfterPost) {
+        releaseRead(); await readDone;
+        await expect(page.locator(".saved-category strong")).toHaveText("Sin categoría");
+      }
+      await expect(page.getByRole("button", { name: "Actualizar detalle", exact: true })).toBeEnabled();
+    } finally {
+      releaseRead(); releasePost();
+      await page.unroute(detail);
+      await page.unroute(categoryWriteForProduct);
+    }
+  }
+  // The server still has no category: both controlled writes are real no-ops and add no Audit entries.
+  await concurrentReadAndNoop(categoryB, name, false); // old GET arrives during the pending POST
+  await scriptedServerCategory(categoryB);
+  await page.getByRole("button", { name: "Actualizar detalle", exact: true }).click();
+  await expect(page.locator(".saved-category strong")).toHaveText(categoryName(info, "B"));
+  await expect(page.getByLabel("Categoría del producto")).toHaveValue(categoryB); // a later explicit GET may win
+  await page.unroute(detail);
+  await concurrentReadAndNoop(categoryCreated, categoryName(info, "B"), true); // old GET arrives after confirmation
   await expect(page.locator(".stock-count")).toHaveCount(0); // no Inventory mutation
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: path.join(artifacts, `catalog-${info.project.name}.png`), fullPage: true });
@@ -268,6 +379,7 @@ test("catalog-journey", async ({ page }, info) => {
 test("catalog-readonly", async ({ page }, info) => {
   await login(page, info);
   await fixture(page, info, "catalog-readonly");
+  await expect(page.getByRole("button", { name: "Agregar variante", exact: true })).toHaveCount(0);
   await page.getByRole("link", { name: "Volver al catálogo", exact: true }).click();
   await expect(page.getByLabel("Filtrar productos")).toHaveValue((await page.locator("#catalog-filter option", { hasText: categoryName(info, "B") }).getAttribute("value"))!);
   await expect(page.locator("#catalog-products-title")).toBeFocused();
@@ -400,18 +512,37 @@ test("catalog-lost-change", async ({ page }, info) => {
   await login(page, info);
   await fixture(page, info, "catalog-lost-change");
   let assignments = 0;
+  let assignmentProcessed!: () => void;
+  const assignmentReady = new Promise<void>((resolve) => { assignmentProcessed = resolve; });
+  let releaseAssignment!: () => void;
+  const assignmentHeld = new Promise<void>((resolve) => { releaseAssignment = resolve; });
   await page.route("**/catalog/products/*/category", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
     assignments += 1;
-    expect((await route.fetch()).status()).toBe(200);
-    await route.abort("failed");
+    try {
+      expect((await route.fetch()).status()).toBe(200);
+      assignmentProcessed();
+      await assignmentHeld;
+      await route.abort("failed");
+    } finally { assignmentProcessed(); }
   });
-  await page.getByLabel("Categoría del producto").selectOption({ label: categoryName(info, "B") });
-  await page.getByRole("button", { name: "Guardar categoría", exact: true }).click();
-  await expect(page.getByRole("main").getByRole("alert")).toContainText("Resultado incierto");
-  await page.getByRole("button", { name: "Actualizar detalle", exact: true }).click();
-  await expect(page.locator(".classification-panel strong")).toHaveText(categoryName(info, "B"));
-  await expect(page.getByRole("main").getByRole("alert")).toContainText("Resultado incierto");
-  expect(assignments).toBe(1);
+  try {
+    await page.getByLabel("Categoría del producto").selectOption({ label: categoryName(info, "B") });
+    await page.getByRole("button", { name: "Guardar categoría", exact: true }).click();
+    await assignmentReady;
+    await expect(page.locator(".classification-panel form")).toHaveAttribute("aria-busy", "true");
+    await expect(page.getByRole("button", { name: "Actualizar detalle", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Agregar variante", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Registrar recepción inicial", exact: true })).toBeDisabled();
+    releaseAssignment();
+    await expect(page.getByRole("main").getByRole("alert")).toContainText("Resultado incierto");
+    await expect(page.getByRole("button", { name: "Actualizar detalle", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Guardar categoría", exact: true })).toBeDisabled();
+    await page.getByRole("button", { name: "Actualizar detalle", exact: true }).click();
+    await expect(page.locator(".classification-panel strong")).toHaveText(categoryName(info, "B"));
+    await expect(page.getByRole("main").getByRole("alert")).toContainText("Resultado incierto");
+    expect(assignments).toBe(1);
+  } finally { releaseAssignment(); await page.unroute("**/catalog/products/*/category"); }
   await page.reload(); // explicit fresh observation, no replay of the lost command
   await expect(page.getByRole("button", { name: "Activar producto", exact: true })).toBeEnabled();
   let activations = 0;
@@ -426,4 +557,144 @@ test("catalog-lost-change", async ({ page }, info) => {
   await expect(page.getByRole("button", { name: "Desactivar producto", exact: true })).toBeDisabled();
   await expect(page.locator(".success-box")).toHaveCount(0);
   expect(activations).toBe(1);
+});
+
+// BC-01A is independent of catalog-journey and its open CI-01 investigation.
+test("catalog-variants", async ({ page }, info) => {
+  await login(page, info);
+  await fixture(page, info, "catalog-variants");
+  const productId = new URL(page.url()).pathname.split("/").pop()!;
+  const original = await page.getByLabel("Presentación / SKU", { exact: true }).inputValue();
+  const detail = `${root}/catalog/products/${productId}`;
+  let releaseRead!: () => void;
+  let readStarted!: () => void;
+  const held = new Promise<void>((resolve) => { releaseRead = resolve; });
+  const started = new Promise<void>((resolve) => { readStarted = resolve; });
+  let readDone!: () => void;
+  const done = new Promise<void>((resolve) => { readDone = resolve; });
+  await page.route(`**${detail}`, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    try { const response = await route.fetch(); readStarted(); await held; await route.fulfill({ response }).catch(() => {}); }
+    finally { readDone(); }
+  }, { times: 1 });
+  let releaseCreate!: () => void;
+  let createStarted!: () => void;
+  const createHeld = new Promise<void>((resolve) => { releaseCreate = resolve; });
+  const createReady = new Promise<void>((resolve) => { createStarted = resolve; });
+  await page.route(`**${detail}/variants`, async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    try { const response = await route.fetch(); createStarted(); await createHeld; await route.fulfill({ response }); }
+    finally { createStarted(); }
+  }, { times: 1 });
+  try {
+    await page.getByRole("button", { name: "Actualizar detalle", exact: true }).click();
+    await started;
+    await page.getByLabel("Etiqueta de presentación", { exact: true }).fill("Fictional second pack");
+    await page.getByLabel("SKU de la nueva variante", { exact: true }).fill(`BC01A-${info.project.name}-confirmed`);
+    const created = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === `${detail}/variants`);
+    await page.getByRole("button", { name: "Agregar variante", exact: true }).click();
+    await createReady;
+    await expect(page.getByLabel("Categoría del producto", { exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Guardar categoría", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Actualizar detalle", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Registrar recepción inicial", exact: true })).toBeDisabled();
+    releaseCreate();
+    expect((await created).status()).toBe(201);
+    await expect(page.getByText("Variante creada y seleccionada.", { exact: true })).toBeVisible();
+    const selected = await page.getByLabel("Presentación / SKU", { exact: true }).inputValue();
+    expect(selected).not.toBe(original);
+    await expect(page.getByLabel("Categoría del producto", { exact: true })).toBeEnabled();
+    await page.getByLabel("Categoría del producto", { exact: true }).selectOption({ label: categoryName(info, "B") });
+    await page.getByRole("button", { name: "Guardar categoría", exact: true }).click();
+    await expect(page.locator(".classification-panel form")).toHaveAttribute("aria-busy", "false");
+    await page.getByRole("button", { name: "Activar producto", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Desactivar producto", exact: true })).toBeEnabled();
+    releaseRead(); await done;
+    await expect(page.getByLabel("Presentación / SKU", { exact: true })).toHaveValue(selected);
+    await expect(page.locator("#variant option")).toHaveCount(2);
+    await expect(page.locator(".saved-category strong")).toHaveText(categoryName(info, "B"));
+    await expect(page.getByRole("button", { name: "Desactivar producto", exact: true })).toBeEnabled();
+    await expect(page.getByText("Sin recepción inicial", { exact: true })).toBeVisible();
+    await page.getByLabel("Presentación / SKU", { exact: true }).selectOption(original);
+    await expect(page.locator(".identity-panel .identifier")).toHaveText(original);
+    await page.getByLabel("Presentación / SKU", { exact: true }).selectOption(selected);
+    await expect(page.locator(".identity-panel .identifier")).toHaveText(selected);
+    await expect(page.getByText("Sin recepción inicial", { exact: true })).toBeVisible();
+    await page.getByLabel("Etiqueta de presentación", { exact: true }).fill("Fictional duplicate");
+    await page.getByLabel("SKU de la nueva variante", { exact: true }).fill(`BC01A-${info.project.name}-confirmed`);
+    await page.getByRole("button", { name: "Agregar variante", exact: true }).click();
+    await expect(page.locator(".variant-panel [role=alert]")).toContainText("ya está registrado");
+    await expect(page.locator("#variant option")).toHaveCount(2);
+    await expect(page.getByRole("button", { name: "Actualizar detalle", exact: true })).toBeEnabled();
+    await expect(page.getByLabel("Categoría del producto", { exact: true })).toBeEnabled();
+    let releaseReceipt!: () => void;
+    let receiptStarted!: () => void;
+    const receiptHeld = new Promise<void>((resolve) => { releaseReceipt = resolve; });
+    const receiptReady = new Promise<void>((resolve) => { receiptStarted = resolve; });
+    const receiptPath = `${root}/inventory/variants/${selected}/initial-receipt`;
+    await page.route(`**${receiptPath}`, async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      try { expect((await route.fetch()).status()).toBe(201); receiptStarted(); await receiptHeld; await route.abort("failed"); }
+      finally { receiptStarted(); }
+    });
+    try {
+      await page.getByLabel("Unidad de inventario", { exact: true }).selectOption("EACH");
+      await page.getByLabel("Cantidad recibida", { exact: true }).fill("12");
+      await page.getByRole("button", { name: "Registrar recepción inicial", exact: true }).click();
+      await receiptReady;
+      await expect(page.getByLabel("Presentación / SKU", { exact: true })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Agregar variante", exact: true })).toBeDisabled();
+      await expect(page.getByLabel("Categoría del producto", { exact: true })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Actualizar detalle", exact: true })).toBeDisabled();
+      releaseReceipt();
+      await expect(page.getByText("El resultado de la recepción es incierto.", { exact: false })).toBeVisible();
+      await expect(page.locator(".stock-count")).toHaveText("12 EACH");
+      await expect(page.getByLabel("Presentación / SKU", { exact: true })).toBeEnabled();
+      await expect(page.getByLabel("Categoría del producto", { exact: true })).toBeEnabled();
+      await page.getByLabel("Presentación / SKU", { exact: true }).selectOption(original);
+      await expect(page.locator(".stock-count")).toHaveCount(0);
+      await expect(page.getByText("Sin recepción inicial", { exact: true })).toBeVisible();
+      await expect(page.getByText("requiere revisión. Cambiar de selección", { exact: false })).toBeVisible();
+      await page.getByLabel("Presentación / SKU", { exact: true }).selectOption(selected);
+      await expect(page.getByText("El resultado de la recepción es incierto.", { exact: false })).toBeVisible();
+      await expect(page.locator(".stock-count")).toHaveText("12 EACH");
+      await expect(page.getByRole("button", { name: "Registrar recepción inicial", exact: true })).toHaveCount(0);
+    } finally { releaseReceipt(); await page.unroute(`**${receiptPath}`); }
+    for (const width of [320, 390, 768, 1280]) {
+      await page.setViewportSize({ width, height: 844 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    }
+  } finally { releaseRead(); releaseCreate(); await page.unroute(`**${detail}`); await page.unroute(`**${detail}/variants`); }
+});
+
+test("catalog-variants-lost", async ({ page }, info) => {
+  await login(page, info);
+  await fixture(page, info, "catalog-variants-lost");
+  let release!: () => void;
+  let started!: () => void;
+  const hold = new Promise<void>((resolve) => { release = resolve; });
+  const ready = new Promise<void>((resolve) => { started = resolve; });
+  let posts = 0;
+  await page.route("**/api/v1/operator/catalog/products/*/variants", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    posts += 1;
+    try { expect((await route.fetch()).status()).toBe(201); started(); await hold; await route.abort("failed"); }
+    finally { started(); }
+  });
+  try {
+    await page.getByLabel("Etiqueta de presentación", { exact: true }).fill("Fictional uncertain pack");
+    await page.getByLabel("SKU de la nueva variante", { exact: true }).fill(`BC01A-${info.project.name}-lost`);
+    await page.getByRole("button", { name: "Agregar variante", exact: true }).click();
+    await ready;
+    await expect(page.locator(".variant-panel form")).toHaveAttribute("aria-busy", "true");
+    await expect(page.getByLabel("Presentación / SKU", { exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Registrar recepción inicial", exact: true })).toBeDisabled();
+    release();
+    await expect(page.locator(".variant-panel [role=alert]")).toContainText("Resultado incierto");
+    await page.getByRole("button", { name: "Actualizar detalle", exact: true }).click();
+    await expect(page.locator("#variant option")).toHaveCount(2);
+    await expect(page.getByRole("button", { name: "Agregar variante", exact: true })).toBeDisabled();
+    await expect(page.locator(".variant-panel .notice")).toContainText("La lectura no confirma");
+    expect(posts).toBe(1);
+  } finally { release(); await page.unroute("**/api/v1/operator/catalog/products/*/variants"); }
 });

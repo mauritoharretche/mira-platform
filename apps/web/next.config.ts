@@ -3,7 +3,7 @@ import type { NextConfig } from "next";
 // These are the complete operator proxy surface, never an arbitrary URL proxy.
 const endpoints = [
   "auth/csrf", "auth/login", "auth/session", "auth/logout",
-  "catalog/products", "catalog/products/:productId",
+  "catalog/products", "catalog/products/:productId", "catalog/products/:productId/variants",
   "catalog/categories", "catalog/products/:productId/category", "catalog/products/:productId/active",
   "inventory/variants/:variantId/initial-receipt",
   "inventory/variants/:variantId/stock", "inventory/variants/:variantId/movements",

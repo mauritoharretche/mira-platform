@@ -66,7 +66,7 @@ class OperatorAuthenticationTests(TestCase):
         state = self.client.get(PREFIX + "/auth/session", secure=True).json()
         self.assertTrue(state["authenticated"])
         self.assertCountEqual(state["capabilities"], ["catalog.create_product_with_initial_variant", "catalog.read_product",
-                              "inventory.receive_stock", "inventory.read_stock", "inventory.read_stock_movements"])
+                              "inventory.receive_stock", "inventory.read_stock", "inventory.read_stock_movements", "catalog.add_variant_to_product"])
 
     def test_absolute_expiry_is_eight_hours_and_reads_cannot_extend_it(self):
         now = timezone.now()
