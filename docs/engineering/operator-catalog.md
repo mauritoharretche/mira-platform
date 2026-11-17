@@ -178,3 +178,33 @@ selected category that has not appeared in the loaded category pages keeps a
 provisional label rather than changing the product filter. The UI preserves the
 existing skip link, keyboard focus cues, loading/error announcements and all
 server-side permissions. Navigation never retries a write.
+
+## BC-01A: additional operator variants (Proposed ADR-023)
+
+The isolated operator surface adds POST /catalog/products/{product_id}/variants.
+Strict JSON accepts label, sku and optional nullable barcode. It returns 201 with
+id/label/sku/barcode. The existing Catalog command normalizes identity and writes
+one Variant and its Audit atomically. The capability catalog.add_variant_to_product
+requires catalog.add_variant; reads still require both Product and Variant view
+permissions. Session hints grant nothing. Authorization precedes input validation.
+Known SKU/barcode conflicts return identifier_conflict (409); missing Product is
+404, invalid input 400 and database failure a sanitized 503. No replay is provided.
+
+The Product workspace owns the selected Variant. A confirmed addition invalidates
+older detail reads, merges only the Variant into the latest local Product, orders
+variants by UUID and selects it. It never fabricates stock, price or measurement.
+A lost/malformed write response blocks further additions in that mounted panel;
+refresh is read-only and never converts uncertainty to success. Review independently
+before leaving this screen and starting another operation. Selection and additional
+creation are locked during a receipt or addition. Stock reads are scoped to a keyed
+Variant panel; old responses cannot populate a different selection. Receipt outcomes
+remain in the workspace by Variant, including warnings while viewing another one.
+No pricing, measurement, sellability, later receipt or adjustment editor is added.
+
+BC-01A browser cases are catalog-variants and catalog-variants-lost in both projects.
+The native harness retains all previous cases and checks additional persisted
+Variant/Audit correspondence, duplicate/lost-response behavior and explicit-only
+stock creation. CI-01 remains an independent unresolved catalog-journey failure.
+The known minimatch full-audit FAIL and historical ADR status references above
+remain exceptions. Only the verified native test_mira runner may execute fixtures;
+no development mira access, real accounts, external exposure or deployment is allowed.

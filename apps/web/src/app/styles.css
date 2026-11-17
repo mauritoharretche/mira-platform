@@ -211,3 +211,9 @@ th { font-size: .75rem; color: var(--muted); background: #f6f8f6; }
   table td { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); gap: .6rem; border: 0; padding: .25rem 0; }
   table td::before { content: attr(data-label); font-weight: 600; color: var(--muted); }
 }
+
+/* BC-01A uses native form controls and the existing Retail Calm tokens. */
+.variant-panel fieldset { border: 0; padding: 0; margin: 1rem 0 0; min-width: 0; }
+.variant-panel legend { font-weight: 700; margin-bottom: .75rem; }
+.variant-panel input, .variant-panel select { max-width: 100%; }
+.variant-panel button { margin-top: 1rem; }

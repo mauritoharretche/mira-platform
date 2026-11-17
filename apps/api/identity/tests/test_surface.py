@@ -25,6 +25,7 @@ class IdentitySurfaceTests(SimpleTestCase):
              "api/v1/operator/auth/csrf", "api/v1/operator/auth/login",
              "api/v1/operator/auth/session", "api/v1/operator/auth/logout",
              "api/v1/operator/catalog/products", "api/v1/operator/catalog/products/<str:product_id>",
+             "api/v1/operator/catalog/products/<str:product_id>/variants",
              "api/v1/operator/catalog/categories", "api/v1/operator/catalog/products/<str:product_id>/category",
              "api/v1/operator/catalog/products/<str:product_id>/active",
              "api/v1/operator/inventory/variants/<str:variant_id>/initial-receipt",
