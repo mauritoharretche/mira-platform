@@ -268,6 +268,7 @@ test("catalog-journey", async ({ page }, info) => {
 test("catalog-readonly", async ({ page }, info) => {
   await login(page, info);
   await fixture(page, info, "catalog-readonly");
+  await expect(page.getByRole("button", { name: "Agregar variante", exact: true })).toHaveCount(0);
   await page.getByRole("link", { name: "Volver al catálogo", exact: true }).click();
   await expect(page.getByLabel("Filtrar productos")).toHaveValue((await page.locator("#catalog-filter option", { hasText: categoryName(info, "B") }).getAttribute("value"))!);
   await expect(page.locator("#catalog-products-title")).toBeFocused();
@@ -426,4 +427,134 @@ test("catalog-lost-change", async ({ page }, info) => {
   await expect(page.getByRole("button", { name: "Desactivar producto", exact: true })).toBeDisabled();
   await expect(page.locator(".success-box")).toHaveCount(0);
   expect(activations).toBe(1);
+});
+
+// BC-01A is independent of catalog-journey and its open CI-01 investigation.
+test("catalog-variants", async ({ page }, info) => {
+  await login(page, info);
+  await fixture(page, info, "catalog-variants");
+  const productId = new URL(page.url()).pathname.split("/").pop()!;
+  const original = await page.getByLabel("Presentación / SKU", { exact: true }).inputValue();
+  const detail = `${root}/catalog/products/${productId}`;
+  let releaseRead!: () => void;
+  let readStarted!: () => void;
+  const held = new Promise<void>((resolve) => { releaseRead = resolve; });
+  const started = new Promise<void>((resolve) => { readStarted = resolve; });
+  let readDone!: () => void;
+  const done = new Promise<void>((resolve) => { readDone = resolve; });
+  await page.route(`**${detail}`, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    try { const response = await route.fetch(); readStarted(); await held; await route.fulfill({ response }).catch(() => {}); }
+    finally { readDone(); }
+  }, { times: 1 });
+  let releaseCreate!: () => void;
+  let createStarted!: () => void;
+  const createHeld = new Promise<void>((resolve) => { releaseCreate = resolve; });
+  const createReady = new Promise<void>((resolve) => { createStarted = resolve; });
+  await page.route(`**${detail}/variants`, async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    try { const response = await route.fetch(); createStarted(); await createHeld; await route.fulfill({ response }); }
+    finally { createStarted(); }
+  }, { times: 1 });
+  try {
+    await page.getByRole("button", { name: "Actualizar detalle", exact: true }).click();
+    await started;
+    await page.getByLabel("Etiqueta de presentación", { exact: true }).fill("Fictional second pack");
+    await page.getByLabel("SKU de la nueva variante", { exact: true }).fill(`BC01A-${info.project.name}-confirmed`);
+    const created = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === `${detail}/variants`);
+    await page.getByRole("button", { name: "Agregar variante", exact: true }).click();
+    await createReady;
+    await page.getByLabel("Categoría del producto", { exact: true }).selectOption({ label: categoryName(info, "B") });
+    await page.getByRole("button", { name: "Guardar categoría", exact: true }).click();
+    await expect(page.locator(".classification-panel form")).toHaveAttribute("aria-busy", "false");
+    await page.getByRole("button", { name: "Activar producto", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Desactivar producto", exact: true })).toBeEnabled();
+    releaseCreate();
+    expect((await created).status()).toBe(201);
+    await expect(page.getByText("Variante creada y seleccionada.", { exact: true })).toBeVisible();
+    const selected = await page.getByLabel("Presentación / SKU", { exact: true }).inputValue();
+    expect(selected).not.toBe(original);
+    releaseRead(); await done;
+    await expect(page.getByLabel("Presentación / SKU", { exact: true })).toHaveValue(selected);
+    await expect(page.locator("#variant option")).toHaveCount(2);
+    await expect(page.locator(".saved-category strong")).toHaveText(categoryName(info, "B"));
+    await expect(page.getByRole("button", { name: "Desactivar producto", exact: true })).toBeEnabled();
+    await expect(page.getByText("Sin recepción inicial", { exact: true })).toBeVisible();
+    await page.getByLabel("Presentación / SKU", { exact: true }).selectOption(original);
+    await expect(page.locator(".identity-panel .identifier")).toHaveText(original);
+    await page.getByLabel("Presentación / SKU", { exact: true }).selectOption(selected);
+    await expect(page.locator(".identity-panel .identifier")).toHaveText(selected);
+    await expect(page.getByText("Sin recepción inicial", { exact: true })).toBeVisible();
+    await page.getByLabel("Etiqueta de presentación", { exact: true }).fill("Fictional duplicate");
+    await page.getByLabel("SKU de la nueva variante", { exact: true }).fill(`BC01A-${info.project.name}-confirmed`);
+    await page.getByRole("button", { name: "Agregar variante", exact: true }).click();
+    await expect(page.locator(".variant-panel [role=alert]")).toContainText("ya está registrado");
+    await expect(page.locator("#variant option")).toHaveCount(2);
+    let releaseReceipt!: () => void;
+    let receiptStarted!: () => void;
+    const receiptHeld = new Promise<void>((resolve) => { releaseReceipt = resolve; });
+    const receiptReady = new Promise<void>((resolve) => { receiptStarted = resolve; });
+    const receiptPath = `${root}/inventory/variants/${selected}/initial-receipt`;
+    await page.route(`**${receiptPath}`, async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      try { expect((await route.fetch()).status()).toBe(201); receiptStarted(); await receiptHeld; await route.abort("failed"); }
+      finally { receiptStarted(); }
+    });
+    try {
+      await page.getByLabel("Unidad de inventario", { exact: true }).selectOption("EACH");
+      await page.getByLabel("Cantidad recibida", { exact: true }).fill("12");
+      await page.getByRole("button", { name: "Registrar recepción inicial", exact: true }).click();
+      await receiptReady;
+      await expect(page.getByLabel("Presentación / SKU", { exact: true })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Agregar variante", exact: true })).toBeDisabled();
+      releaseReceipt();
+      await expect(page.getByText("El resultado de la recepción es incierto.", { exact: false })).toBeVisible();
+      await expect(page.locator(".stock-count")).toHaveText("12 EACH");
+      await expect(page.getByLabel("Presentación / SKU", { exact: true })).toBeEnabled();
+      await page.getByLabel("Presentación / SKU", { exact: true }).selectOption(original);
+      await expect(page.locator(".stock-count")).toHaveCount(0);
+      await expect(page.getByText("Sin recepción inicial", { exact: true })).toBeVisible();
+      await expect(page.getByText("requiere revisión. Cambiar de selección", { exact: false })).toBeVisible();
+      await page.getByLabel("Presentación / SKU", { exact: true }).selectOption(selected);
+      await expect(page.getByText("El resultado de la recepción es incierto.", { exact: false })).toBeVisible();
+      await expect(page.locator(".stock-count")).toHaveText("12 EACH");
+      await expect(page.getByRole("button", { name: "Registrar recepción inicial", exact: true })).toHaveCount(0);
+    } finally { releaseReceipt(); await page.unroute(`**${receiptPath}`); }
+    for (const width of [320, 390, 768, 1280]) {
+      await page.setViewportSize({ width, height: 844 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    }
+  } finally { releaseRead(); releaseCreate(); await page.unroute(`**${detail}`); await page.unroute(`**${detail}/variants`); }
+});
+
+test("catalog-variants-lost", async ({ page }, info) => {
+  await login(page, info);
+  await fixture(page, info, "catalog-variants-lost");
+  let release!: () => void;
+  let started!: () => void;
+  const hold = new Promise<void>((resolve) => { release = resolve; });
+  const ready = new Promise<void>((resolve) => { started = resolve; });
+  let posts = 0;
+  await page.route("**/api/v1/operator/catalog/products/*/variants", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    posts += 1;
+    try { expect((await route.fetch()).status()).toBe(201); started(); await hold; await route.abort("failed"); }
+    finally { started(); }
+  });
+  try {
+    await page.getByLabel("Etiqueta de presentación", { exact: true }).fill("Fictional uncertain pack");
+    await page.getByLabel("SKU de la nueva variante", { exact: true }).fill(`BC01A-${info.project.name}-lost`);
+    await page.getByRole("button", { name: "Agregar variante", exact: true }).click();
+    await ready;
+    await expect(page.locator(".variant-panel form")).toHaveAttribute("aria-busy", "true");
+    await expect(page.getByLabel("Presentación / SKU", { exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Registrar recepción inicial", exact: true })).toBeDisabled();
+    release();
+    await expect(page.locator(".variant-panel [role=alert]")).toContainText("Resultado incierto");
+    await page.getByRole("button", { name: "Actualizar detalle", exact: true }).click();
+    await expect(page.locator("#variant option")).toHaveCount(2);
+    await expect(page.getByRole("button", { name: "Agregar variante", exact: true })).toBeDisabled();
+    await expect(page.locator(".variant-panel .notice")).toContainText("La lectura no confirma");
+    expect(posts).toBe(1);
+  } finally { release(); await page.unroute("**/api/v1/operator/catalog/products/*/variants"); }
 });

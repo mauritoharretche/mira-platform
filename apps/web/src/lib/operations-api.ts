@@ -3,7 +3,8 @@ export const MAX_INTEGER = "9223372036854775807";
 
 export type Session = { authenticated: boolean; capabilities: string[] };
 export type ProductSummary = { id: string; name: string; category_id: string | null; is_active: boolean };
-export type Product = ProductSummary & { variants: { id: string; label: string; sku: string; barcode: string | null }[] };
+export type Variant = { id: string; label: string; sku: string; barcode: string | null };
+export type Product = ProductSummary & { variants: Variant[] };
 export type Category = { id: string; name: string };
 export type ProductPage = { products: ProductSummary[]; next_cursor: string | null };
 export type CategoryPage = { categories: Category[]; next_cursor: string | null };

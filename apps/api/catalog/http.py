@@ -210,3 +210,35 @@ class ProductActiveView(OperatorAPIView):
         except application.CatalogValidationError:
             return error_response("validation_error", 400)
         return Response({"id": str(product.id), "is_active": product.is_active})
+
+
+class VariantInput(StrictSerializer):
+    label = StrictTextField(max_length=255)
+    sku = StrictTextField(max_length=128)
+    barcode = StrictTextField(max_length=255, allow_null=True, allow_blank=True, required=False, default=None)
+
+
+class ProductVariantsView(OperatorAPIView):
+    http_method_names = ["post", "options"]
+
+    def post(self, request, product_id):
+        require_capability(principal=request.user, capability=Capability.ADD_VARIANT_TO_PRODUCT)
+        _query(request, set())
+        identifier = _uuid(product_id, "product_id")
+        serializer = VariantInput(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            variant = application.add_variant_to_product(
+                principal=request.user, product_id=identifier, **serializer.validated_data,
+            )
+        except application.ProductNotFoundError:
+            return error_response("not_found", 404)
+        except application.CatalogValidationError:
+            return error_response("validation_error", 400)
+        except IntegrityError as error:
+            name = getattr(getattr(error.__cause__, "diag", None), "constraint_name", None)
+            if name in {"catalog_variant_sku_unique", "catalog_variant_barcode_unique"}:
+                return error_response("identifier_conflict", 409)
+            raise
+        return Response({"id": str(variant.pk), "label": variant.label,
+                         "sku": variant.sku, "barcode": variant.barcode}, status=201)

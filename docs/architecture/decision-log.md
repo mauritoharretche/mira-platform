@@ -14,5 +14,6 @@
 | [ADR-020](adr/ADR-020-same-origin-operator-workflow.md) | Same-origin operator workflow and native sessions | Accepted | 2026-11-08 |
 | [ADR-021](adr/ADR-021-operator-catalog-navigation-and-classification.md) | Operator catalog navigation, classification and activation | Accepted | 2026-11-09 |
 | [ADR-022](adr/ADR-022-runner-controlled-interactive-demo.md) | Native-runner-controlled interactive demonstration | Accepted | 2026-11-09 |
+| [ADR-023](adr/ADR-023-operator-variant-management.md) | Operator variant management | Accepted | 2026-11-16 |
 
 See `adr/ADR-TEMPLATE.md` for the required format.
