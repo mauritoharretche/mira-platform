@@ -175,6 +175,98 @@ async function createCategory(page: Page, name: string) {
   await page.getByRole("button", { name: "Crear categoría", exact: true }).click();
 }
 
+// Hold the response at the browser fetch boundary, after the real GET finishes.
+// This keeps the application read pending without retaining a Playwright Route
+// that the browser may already have cancelled before a late fulfill.
+async function holdPriceHistoryRead(page: Page, pathname: string) {
+  await page.evaluate((historyPath) => {
+    const originalFetch = window.fetch;
+    let intercepted = false;
+    let resolveRead: ((response: Response) => void) | undefined;
+    let rejectRead: ((reason: DOMException) => void) | undefined;
+    let controller: AbortController | undefined;
+    const gate = {
+      state: "waiting",
+      release() {
+        if (gate.state !== "ready" || !resolveRead) throw new Error("History read is not ready");
+        gate.state = "released";
+        const response = new Response(JSON.stringify({ revisions: [], next_cursor: null }), {
+          status: 200, headers: { "Content-Type": "application/json" },
+        });
+        const parse = response.json.bind(response);
+        response.json = async () => {
+          const body = await parse();
+          gate.state = "consumed";
+          return body;
+        };
+        resolveRead(response);
+      },
+      cancel() {
+        if (gate.state !== "ready" || !rejectRead) throw new Error("History read is not ready");
+        gate.state = "cancelled";
+        controller?.abort();
+        rejectRead(new DOMException("Cancelled test read", "AbortError"));
+      },
+      restore() {
+        if (gate.state === "fetching" || gate.state === "ready") {
+          gate.state = "cancelled";
+          controller?.abort();
+          rejectRead?.(new DOMException("Disposed test read", "AbortError"));
+        }
+        window.fetch = originalFetch;
+      },
+    };
+    (window as Window & { __miraHistoryGate?: typeof gate }).__miraHistoryGate = gate;
+    window.fetch = (input, init) => {
+      const request = new Request(input, init);
+      if (intercepted || request.method !== "GET" || new URL(request.url).pathname !== historyPath) {
+        return originalFetch(input, init);
+      }
+      intercepted = true;
+      gate.state = "fetching";
+      const pending = new Promise<Response>((resolve, reject) => {
+        resolveRead = resolve;
+        rejectRead = reject;
+      });
+      controller = new AbortController();
+      const signal = init?.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal;
+      void originalFetch(input, { ...init, signal }).then(
+        (response) => {
+          if (gate.state === "cancelled") return;
+          if (!response.ok) {
+            gate.state = "failed";
+            rejectRead?.(new DOMException("History GET failed", "NetworkError"));
+          } else gate.state = "ready";
+        },
+        () => {
+          if (gate.state === "cancelled") return;
+          gate.state = "failed";
+          rejectRead?.(new DOMException("History GET failed", "NetworkError"));
+        },
+      );
+      return pending;
+    };
+  }, pathname);
+  const state = () => page.evaluate(() => (window as Window & { __miraHistoryGate?: { state: string } }).__miraHistoryGate?.state);
+  await expect.poll(state).toBe("waiting");
+  return {
+    ready: () => expect.poll(state).toBe("ready"),
+    release: async () => {
+      await page.evaluate(() => (window as Window & { __miraHistoryGate?: { release(): void } }).__miraHistoryGate!.release());
+      await expect.poll(state).toBe("consumed");
+      await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    },
+    cancel: () => page.evaluate(() => (window as Window & { __miraHistoryGate?: { cancel(): void } }).__miraHistoryGate!.cancel()),
+    restore: () => page.evaluate(() => {
+      const target = window as Window & { __miraHistoryGate?: { state: string; restore(): void } };
+      if (target.__miraHistoryGate) {
+        target.__miraHistoryGate.restore();
+        delete target.__miraHistoryGate;
+      }
+    }),
+  };
+}
+
 test("catalog-journey", async ({ page }, info) => {
   const permits = new OperationPermitCoordinator();
   const old = permits.acquire("classification", "first-product");
@@ -535,12 +627,12 @@ test("catalog-lost-change", async ({ page }, info) => {
     await expect(page.getByRole("button", { name: "Agregar variante", exact: true })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Registrar recepción inicial", exact: true })).toBeDisabled();
     releaseAssignment();
-    await expect(page.getByRole("main").getByRole("alert")).toContainText("Resultado incierto");
+    await expect(page.locator(".classification-panel [role=alert]")).toContainText("Resultado incierto");
     await expect(page.getByRole("button", { name: "Actualizar detalle", exact: true })).toBeEnabled();
     await expect(page.getByRole("button", { name: "Guardar categoría", exact: true })).toBeDisabled();
     await page.getByRole("button", { name: "Actualizar detalle", exact: true }).click();
     await expect(page.locator(".classification-panel strong")).toHaveText(categoryName(info, "B"));
-    await expect(page.getByRole("main").getByRole("alert")).toContainText("Resultado incierto");
+    await expect(page.locator(".classification-panel [role=alert]")).toContainText("Resultado incierto");
     expect(assignments).toBe(1);
   } finally { releaseAssignment(); await page.unroute("**/catalog/products/*/category"); }
   await page.reload(); // explicit fresh observation, no replay of the lost command
@@ -552,7 +644,7 @@ test("catalog-lost-change", async ({ page }, info) => {
     await route.abort("failed");
   });
   await page.getByRole("button", { name: "Activar producto", exact: true }).click();
-  await expect(page.getByRole("main").getByRole("alert")).toContainText("Resultado incierto");
+  await expect(page.locator(".classification-panel [role=alert]")).toContainText("Resultado incierto");
   await page.getByRole("button", { name: "Actualizar detalle", exact: true }).click();
   await expect(page.getByRole("button", { name: "Desactivar producto", exact: true })).toBeDisabled();
   await expect(page.locator(".success-box")).toHaveCount(0);
@@ -697,4 +789,198 @@ test("catalog-variants-lost", async ({ page }, info) => {
     await expect(page.locator(".variant-panel .notice")).toContainText("La lectura no confirma");
     expect(posts).toBe(1);
   } finally { release(); await page.unroute("**/api/v1/operator/catalog/products/*/variants"); }
+});
+
+test("catalog-price", async ({ page }, info) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.name));
+  await login(page, info);
+  await fixture(page, info, "catalog-price");
+  const selector = page.getByLabel("Presentación / SKU", { exact: true });
+  await selector.selectOption({ label: `Fictional fixture · CATALOG-FIXTURE-${info.project.name}-catalog-price` });
+  const original = await selector.inputValue();
+  await expect(page.locator("#variant option")).toHaveCount(2);
+  const values = await page.locator("#variant option").evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value));
+  const other = values.find((value) => value && value !== original)!;
+  await expect(page.getByText("Sin precio asignado", { exact: true })).toBeVisible();
+  const pricePath = `${root}/catalog/variants/${original}/price`;
+  let pricePosts = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === pricePath) pricePosts += 1;
+  });
+  await page.getByLabel("Importe ARS por variante").fill("12,30");
+  const first = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === pricePath);
+  await page.getByRole("button", { name: "Guardar precio", exact: true }).click();
+  expect((await first).status()).toBe(200);
+  await expect(page.locator(".price-panel .stock-count")).toHaveText("ARS 12,30");
+  await expect(page.locator(".price-history tbody tr")).toHaveCount(1);
+  // No-op must retain its revision; the backend and Audit assertions verify the same invariant.
+  const noop = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === pricePath);
+  await page.getByRole("button", { name: "Guardar precio", exact: true }).click();
+  expect((await noop).status()).toBe(200);
+  await expect(page.locator(".price-panel form")).toHaveAttribute("aria-busy", "false");
+  await expect(page.locator(".price-history tbody tr")).toHaveCount(1);
+
+  const historyPath = `${pricePath}/revisions`;
+  const oldHistory = await holdPriceHistoryRead(page, historyPath);
+  let releaseConflict!: () => void;
+  let conflictStarted!: () => void;
+  let conflictPosts = 0;
+  const conflictHeld = new Promise<void>((resolve) => { releaseConflict = resolve; });
+  const conflictReady = new Promise<void>((resolve) => { conflictStarted = resolve; });
+  try {
+    await page.getByRole("button", { name: "Consultar historial" }).click();
+    await oldHistory.ready();
+    await expect(page.getByRole("status").filter({ hasText: "Consultando revisiones" })).toBeVisible();
+    await page.route(`**${pricePath}`, async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      conflictPosts += 1;
+      conflictStarted();
+      await conflictHeld;
+      await route.fulfill({ status: 409, json: { error: { code: "price_conflict" } } });
+    }, { times: 1 });
+    await page.getByLabel("Importe ARS por variante").fill("14,50");
+    await page.getByRole("button", { name: "Guardar precio", exact: true }).click();
+    await conflictReady;
+    await oldHistory.cancel();
+    releaseConflict();
+    await expect(page.locator(".price-panel [role=alert]")).toContainText("revisión de precio cambió");
+    await expect(page.getByLabel("Importe ARS por variante")).toHaveValue("14,50");
+    await expect(page.getByRole("button", { name: "Guardar precio", exact: true })).toBeDisabled();
+    await expect(page.getByRole("status").filter({ hasText: "Consultando revisiones" })).toHaveCount(0);
+    await expect(page.locator(".price-history [role=alert]")).toHaveCount(0);
+    await expect(page.locator(".price-history tbody tr")).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "Consultar historial" })).toBeEnabled();
+    await page.getByRole("button", { name: "Consultar historial" }).click();
+    await expect(page.locator(".price-history tbody tr")).toHaveCount(1);
+    expect(conflictPosts).toBe(1);
+  } finally {
+    releaseConflict();
+    if (!page.isClosed()) { await oldHistory.restore(); await page.unroute(`**${pricePath}`); }
+  }
+  expect(pricePosts).toBe(3); // Initial write, no-op, and exactly one conflicted write.
+  await selector.selectOption(other);
+  await expect(page.getByText("Sin precio asignado", { exact: true })).toBeVisible();
+  await expect(page.locator(".price-panel .error-box")).toHaveCount(0);
+  await selector.selectOption(original);
+  await expect(page.locator(".price-panel .error-box")).toContainText("revisión de precio cambió");
+  await expect(page.getByLabel("Importe ARS por variante")).toHaveValue("14,50");
+  await expect(page.getByRole("button", { name: "Guardar precio", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Editar sobre esta revisión" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Consultar precio vigente" }).click();
+  await expect(page.getByLabel("Importe ARS por variante")).toHaveValue("14,50");
+  await expect(page.getByRole("button", { name: "Guardar precio", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Editar sobre esta revisión" })).toBeVisible();
+  expect(pricePosts).toBe(3);
+  await page.getByRole("button", { name: "Editar sobre esta revisión" }).click();
+  await expect(page.getByRole("button", { name: "Guardar precio", exact: true })).toBeEnabled();
+  const second = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === pricePath);
+  await page.getByRole("button", { name: "Guardar precio", exact: true }).click();
+  expect((await second).status()).toBe(200);
+  await expect(page.locator(".price-panel .stock-count")).toHaveText("ARS 14,50");
+  await expect(page.locator(".price-history tbody tr")).toHaveCount(2);
+  await selector.selectOption(other);
+  await expect(page.locator(".price-panel")).toHaveCount(1);
+  await expect(page.getByText("Sin precio asignado", { exact: true })).toBeVisible();
+  await selector.selectOption(original);
+  await expect(page.locator(".price-panel")).toHaveCount(1);
+  await expect(page.locator(".price-panel .stock-count")).toHaveText("ARS 14,50");
+
+  let malformedPosts = 0;
+  const malformedPrice = { revision_id: "00000000-0000-4000-8000-000000000099", variant_id: original,
+    sequence: "3", amount: "16.00", currency: "ARS", price_basis: "PER_VARIANT", recorded_at: "not-a-date" };
+  await page.route(`**${pricePath}`, async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    malformedPosts += 1;
+    await route.fulfill({ status: 200, json: { price: malformedPrice } });
+  });
+  try {
+    await page.getByLabel("Importe ARS por variante").fill("16,00");
+    await page.getByRole("button", { name: "Guardar precio", exact: true }).click();
+    await expect(page.locator(".price-panel .error-box")).toContainText("Resultado incierto");
+    await expect(page.locator(".price-panel .success-box")).toHaveCount(0);
+    await expect(page.locator(".price-panel .stock-count")).toHaveText("ARS 14,50");
+    await expect(page.getByRole("button", { name: "Guardar precio", exact: true })).toBeDisabled();
+    await page.route(`**${pricePath}`, async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      await route.fulfill({ status: 200, json: { price: { ...malformedPrice, recorded_at: "2026-02-30T12:00:00+00:00" } } });
+    });
+    const malformedRead = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === pricePath);
+    await page.getByRole("button", { name: "Consultar precio vigente" }).click();
+    await malformedRead;
+    await expect(page.locator(".price-panel > p[role=alert].notice")).toBeVisible();
+    await expect(page.locator(".price-panel .stock-count")).toHaveText("ARS 14,50");
+    await page.unroute(`**${pricePath}`);
+    await page.getByRole("button", { name: "Consultar precio vigente" }).click();
+    await expect(page.locator(".price-panel > p[role=alert].notice")).toHaveCount(0);
+    await expect(page.locator(".price-panel > p[role=status].notice")).toContainText("Resultado incierto para esta variante");
+    await expect(page.getByRole("button", { name: "Guardar precio", exact: true })).toBeDisabled();
+    expect(malformedPosts).toBe(1);
+    expect(pageErrors).toEqual([]);
+  } finally { await page.unroute(`**${pricePath}`); }
+});
+
+test("catalog-price-lost", async ({ page }, info) => {
+  await login(page, info);
+  await fixture(page, info, "catalog-price-lost");
+  const selector = page.getByLabel("Presentación / SKU", { exact: true });
+  await selector.selectOption({ label: `Fictional fixture · CATALOG-FIXTURE-${info.project.name}-catalog-price-lost` });
+  await expect(page.getByText("Sin precio asignado", { exact: true })).toBeVisible();
+  const original = await selector.inputValue();
+  const values = await page.locator("#variant option").evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value));
+  const other = values.find((value) => value !== original)!;
+  const pricePath = `${root}/catalog/variants/${original}/price`;
+  const historyPath = `${pricePath}/revisions`;
+  const oldHistory = await holdPriceHistoryRead(page, historyPath);
+  let release!: () => void;
+  let started!: () => void;
+  const hold = new Promise<void>((resolve) => { release = resolve; });
+  const ready = new Promise<void>((resolve) => { started = resolve; });
+  let posts = 0;
+  await page.route(`**${pricePath}`, async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    posts += 1;
+    try { expect((await route.fetch()).status()).toBe(200); started(); await hold; await route.abort("failed"); }
+    finally { started(); }
+  });
+  try {
+    await page.getByRole("button", { name: "Consultar historial" }).click();
+    await oldHistory.ready();
+    await expect(page.getByRole("status").filter({ hasText: "Consultando revisiones" })).toBeVisible();
+    await page.getByLabel("Importe ARS por variante").fill("19,90");
+    await page.getByRole("button", { name: "Guardar precio", exact: true }).click();
+    await ready;
+    await expect(page.locator(".price-panel form")).toHaveAttribute("aria-busy", "true");
+    await expect(selector).toBeDisabled();
+    release();
+    await expect(page.locator(".price-panel [role=alert]")).toContainText("Resultado incierto");
+    await expect(page.getByRole("status").filter({ hasText: "Consultando revisiones" })).toHaveCount(0);
+    await expect(page.locator(".price-history [role=alert]")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Consultar historial" })).toBeEnabled();
+    await page.getByRole("button", { name: "Consultar historial" }).click();
+    await expect(page.locator(".price-history tbody tr")).toHaveCount(1);
+    await oldHistory.release(); // A late, stale empty result must not replace the newer revision.
+    await expect(page.locator(".price-history tbody tr")).toHaveCount(1);
+    await expect(page.locator(".price-history [role=alert]")).toHaveCount(0);
+    await page.getByRole("button", { name: "Consultar precio vigente" }).click();
+    await expect(page.locator(".price-panel .stock-count")).toHaveText("ARS 19,90");
+    await expect(page.getByRole("button", { name: "Guardar precio", exact: true })).toBeDisabled();
+    await selector.selectOption(other);
+    await expect(page.locator(".price-panel")).toHaveCount(1);
+    await expect(page.getByText("Sin precio asignado", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Guardar precio", exact: true })).toBeEnabled();
+    await expect(page.getByText("requiere revisión. Cambiar de variante no confirma", { exact: false })).toBeVisible();
+    await selector.selectOption(original);
+    await expect(page.locator(".price-panel")).toHaveCount(1);
+    await expect(page.locator(".price-panel > p[role=status].notice")).toHaveCount(1);
+    await expect(page.locator(".price-panel > p[role=status].notice")).toContainText("Resultado incierto para esta variante");
+    await page.getByRole("button", { name: "Consultar precio vigente" }).click();
+    await expect(page.locator(".price-panel .stock-count")).toHaveText("ARS 19,90");
+    await expect(page.locator(".price-history tbody tr")).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "Guardar precio", exact: true })).toBeDisabled();
+    expect(posts).toBe(1);
+  } finally {
+    release();
+    if (!page.isClosed()) { await oldHistory.restore(); await page.unroute(`**${pricePath}`); }
+  }
 });

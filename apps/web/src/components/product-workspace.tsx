@@ -6,13 +6,16 @@ import { messageFor, Product, ReadGeneration, request, Variant } from "@/lib/ope
 import { useOperator } from "./operations-shell";
 import { ProductClassificationPanel } from "./product-classification-panel";
 import { ProductVariantPanel } from "./product-variant-panel";
+import { ProductPricePanel } from "./product-price-panel";
 import { StockPanel } from "./stock-panel";
 
 export type OperationPermit = {
   readonly id: symbol;
-  readonly operation: "classification" | "variant" | "stock" | "history";
+  readonly operation: "classification" | "variant" | "stock" | "history" | "price";
   readonly productId: string;
 };
+
+export type PendingPriceConflict = { draft: string; baseRevision: string | null };
 
 export class OperationPermitCoordinator {
   private active: OperationPermit | null = null;
@@ -39,6 +42,8 @@ export function ProductWorkspace({ productId, returnHref }: { productId: string;
   const [locked, setLocked] = useState(false);
   const permits = useRef(new OperationPermitCoordinator());
   const [stockOutcomes, setStockOutcomes] = useState<Record<string, "confirmed" | "uncertain" | "conflict">>({});
+  const [priceUncertain, setPriceUncertain] = useState<Record<string, boolean>>({});
+  const [priceConflicts, setPriceConflicts] = useState<Record<string, PendingPriceConflict>>({});
   const reads = useRef(new ReadGeneration());
   const acquire = (operation: OperationPermit["operation"]): OperationPermit | null => {
     const permit = permits.current.acquire(operation, productId);
@@ -78,12 +83,12 @@ export function ProductWorkspace({ productId, returnHref }: { productId: string;
     {error && <p role="alert" className="error-box">{error}</p>}
     {!current && !error && <p role="status">Consultando producto…</p>}
     {current && <>
-      <ProductClassificationPanel key={productId} product={current} locked={locked} acquire={acquire} release={release} onChanged={(change) => {
+      <ProductClassificationPanel key={`classification:${productId}`} product={current} locked={locked} acquire={acquire} release={release} onChanged={(change) => {
         // Invalidate a concurrent older GET before applying the command result.
         reads.current.invalidate();
         setProduct((previous) => previous?.id === change.id ? { ...previous, ...change } : previous);
       }} />
-      <ProductVariantPanel key={productId} product={current} variantId={variantId} locked={locked}
+      <ProductVariantPanel key={`variants:${productId}`} product={current} variantId={variantId} locked={locked}
         acquire={acquire} release={release} onSelect={(id) => { if (!permits.current.busy) setSelected(id); }}
         onCreated={(variant: Variant) => {
           reads.current.invalidate();
@@ -92,9 +97,22 @@ export function ProductWorkspace({ productId, returnHref }: { productId: string;
           } : previous);
           setSelected(variant.id);
         }} />
+      {Object.entries(priceUncertain).filter(([id, uncertain]) => id !== variantId && uncertain).map(([id]) =>
+        <p key={`price-warning:${id}`} role="status" className="notice">El precio de {current.variants.find((item) => item.id === id)?.sku ?? "otra variante"} requiere revisión. Cambiar de variante no confirma ni reenvía esa escritura.</p>)}
+      <ProductPricePanel key={`price:${productId}:${variantId}`} variantId={variantId} locked={locked}
+        uncertain={priceUncertain[variantId] ?? false} onUncertain={() => setPriceUncertain((previous) => ({ ...previous, [variantId]: true }))}
+        pendingConflict={priceConflicts[variantId] ?? null}
+        onConflict={(value) => setPriceConflicts((previous) => ({ ...previous, [variantId]: value }))}
+        onConflictResolved={() => setPriceConflicts((previous) => {
+          if (!(variantId in previous)) return previous;
+          const updated = { ...previous };
+          delete updated[variantId];
+          return updated;
+        })}
+        acquire={acquire} release={release} />
       {Object.entries(stockOutcomes).filter(([id, outcome]) => id !== variantId && outcome !== "confirmed").map(([id]) =>
-        <p key={id} role="status" className="notice">Una recepción de {current.variants.find((item) => item.id === id)?.sku ?? "otra variante"} requiere revisión. Cambiar de selección no confirma ni reenvía esa escritura.</p>)}
-      <StockPanel key={`${productId}:${variantId}`} product={current} variantId={variantId} locked={locked}
+        <p key={`stock-warning:${id}`} role="status" className="notice">Una recepción de {current.variants.find((item) => item.id === id)?.sku ?? "otra variante"} requiere revisión. Cambiar de selección no confirma ni reenvía esa escritura.</p>)}
+      <StockPanel key={`stock:${productId}:${variantId}`} product={current} variantId={variantId} locked={locked}
         outcome={stockOutcomes[variantId] ?? null} acquire={acquire} release={release}
         onOutcome={(kind) => setStockOutcomes((previous) => ({ ...previous, [variantId]: kind }))} />
     </>}

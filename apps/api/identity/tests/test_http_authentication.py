@@ -178,3 +178,25 @@ class CatalogSurfaceCapabilityTests(TestCase):
                               ["catalog.list_categories", "catalog.set_product_active"])
         user.user_permissions.clear()
         self.assertEqual(client.get(PREFIX + "/auth/session", secure=True).json()["capabilities"], [])
+
+    def test_pricing_session_hints_are_granular_fresh_and_group_aware(self):
+        assert_test_database(self)
+        user = make_operator(permissions=())
+        client = operator_client()
+        sign_in(client)
+        permission = lambda code: Permission.objects.get(content_type__app_label="catalog", codename=code)
+        self.assertEqual(client.get(PREFIX + "/auth/session", secure=True).json()["capabilities"], [])
+        user.user_permissions.add(permission("set_variant_price"))
+        self.assertEqual(client.get(PREFIX + "/auth/session", secure=True).json()["capabilities"], ["catalog.set_variant_price"])
+        user.user_permissions.add(permission("view_variant_price_history"))
+        self.assertEqual(client.get(PREFIX + "/auth/session", secure=True).json()["capabilities"], ["catalog.set_variant_price"])
+        group = Group.objects.create(name="Fictional pricing readers")
+        group.permissions.add(permission("view_variantpricerevision"))
+        user.groups.add(group)
+        self.assertCountEqual(client.get(PREFIX + "/auth/session", secure=True).json()["capabilities"],
+                              ["catalog.set_variant_price", "catalog.read_variant_price", "catalog.read_variant_price_history"])
+        user.user_permissions.remove(permission("set_variant_price"))
+        self.assertCountEqual(client.get(PREFIX + "/auth/session", secure=True).json()["capabilities"],
+                              ["catalog.read_variant_price", "catalog.read_variant_price_history"])
+        group.permissions.clear()
+        self.assertEqual(client.get(PREFIX + "/auth/session", secure=True).json()["capabilities"], [])

@@ -25,6 +25,22 @@ export function catalogQuery(category: string, after: string | null = null) {
 export type Stock = { position_id: string; variant_id: string; unit: "EACH"; on_hand: string; version: string; created_at: string; updated_at: string };
 export type Movement = { movement_id: string; sequence: string; kind: "RECEIPT" | "ADJUSTMENT"; unit: "EACH"; quantity_before: string; delta: string; quantity_after: string; reason: string | null; recorded_at: string };
 export type History = { movements: Movement[]; next_cursor: string | null };
+export type Price = { revision_id: string; variant_id: string; sequence: string; amount: string; currency: "ARS"; price_basis: "PER_VARIANT"; recorded_at: string };
+export type PriceHistory = { revisions: Price[]; next_cursor: string | null };
+
+export function normalizePriceInput(value: string): string | null {
+  const normalized = value.trim().replace(",", ".");
+  if (!/^(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,2})?$/.test(normalized)) return null;
+  const [whole, fraction = ""] = normalized.split(".");
+  if (whole === "0" && (!fraction || /^0+$/.test(fraction))) return null;
+  return `${whole}.${fraction.padEnd(2, "0")}`;
+}
+
+export function formatPriceARS(amount: string): string {
+  if (!/^(?:0|[1-9][0-9]{0,11})\.[0-9]{2}$/.test(amount)) return "Importe no disponible";
+  const [whole, fraction] = amount.split(".");
+  return `ARS ${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ".")},${fraction}`;
+}
 
 export class OperatorError extends Error {
   constructor(public code: string, public fields?: Record<string, string[]>, public uncertain = false) {
@@ -54,6 +70,7 @@ export function messageFor(error: unknown): string {
     identifier_conflict: "El SKU o código de barras ya está registrado. La creación no se realizó.",
     category_conflict: "Ya existe una categoría con ese nombre. Consultá las categorías antes de continuar.",
     stock_conflict: "El stock ya fue inicializado. Consultá el saldo y los movimientos antes de continuar.",
+    price_conflict: "La revisión de precio cambió. Consultá el precio vigente antes de decidir una nueva edición.",
     not_found: "No encontramos el registro solicitado o el entorno operativo no está habilitado.",
     validation_error: "Revisá los datos indicados antes de continuar.",
     unavailable: "El servicio no está disponible. No reenvíes una escritura sin verificar su resultado.",

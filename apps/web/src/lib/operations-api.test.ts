@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clearOperatorState, messageFor, OperatorError, request, signIn, validPositiveInteger } from "./operations-api";
+import { clearOperatorState, formatPriceARS, messageFor, normalizePriceInput, OperatorError, request, signIn, validPositiveInteger } from "./operations-api";
 
 afterEach(() => { clearOperatorState(); vi.unstubAllGlobals(); });
 
@@ -74,5 +74,22 @@ describe("catalog read ownership", () => {
     const failed = vi.fn().mockRejectedValue(new TypeError("network"));
     await expect(request("/catalog/products/id/category", { method: "POST" }, failed)).rejects.toMatchObject({ uncertain: true });
     expect(failed).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("variant price presentation", () => {
+  it("normalizes exact decimal strings without floating point conversion", () => {
+    expect(normalizePriceInput("12,3")).toBe("12.30");
+    expect(normalizePriceInput("0.01")).toBe("0.01");
+    expect(normalizePriceInput("999999999999.99")).toBe("999999999999.99");
+    for (const value of ["0", "-1", "1e2", "1.001", "1,2.3", "1000000000000", "１.００"])
+      expect(normalizePriceInput(value)).toBeNull();
+    expect(formatPriceARS("123456789.05")).toBe("ARS 123.456.789,05");
+  });
+  it("preserves a 409 as an explicit price conflict", async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ error: { code: "price_conflict" } }, { status: 409 }));
+    await expect(request("/catalog/variants/id/price", { method: "POST" }, fetcher))
+      .rejects.toMatchObject({ code: "price_conflict", uncertain: false });
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });

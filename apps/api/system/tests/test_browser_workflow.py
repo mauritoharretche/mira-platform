@@ -26,8 +26,8 @@ from django.test import LiveServerTestCase, override_settings
 from django.utils import timezone
 from django.utils.crypto import salted_hmac
 
-from audit.models import CatalogAuditEntry, CatalogChangeAuditEntry, InventoryMovementAuditEntry
-from catalog.models import Category, Product, Variant
+from audit.models import CatalogAuditEntry, CatalogChangeAuditEntry, CatalogPriceAuditEntry, InventoryMovementAuditEntry
+from catalog.models import Category, Product, Variant, VariantPriceRevision
 from identity.models import LoginAttemptWindow
 from identity.tests.test_http_authentication import PERMISSIONS
 from inventory.models import StockMovement, StockPosition
@@ -47,6 +47,7 @@ _BROWSER_CASES = {
     "catalog.spec.ts": frozenset({
         "catalog-journey", "catalog-readonly", "catalog-revoked", "catalog-stale",
         "catalog-lost-category", "catalog-lost-change", "catalog-variants", "catalog-variants-lost",
+        "catalog-price", "catalog-price-lost",
     }),
     "operations.spec.ts": frozenset({
         "journey", "csrf", "denied", "revoked", "duplicate", "lost-creation",
@@ -57,7 +58,7 @@ _FAILED_RESULT_STATES = frozenset({"failed", "timedOut", "interrupted"})
 _TEST_OUTCOMES = frozenset({"expected", "unexpected", "flaky", "skipped"})
 _GLOBAL_LOGIN_LIMIT = 30
 _GLOBAL_LOGIN_WINDOW = timedelta(seconds=60)
-_LOGIN_RESERVATIONS_PER_PROJECT = 16
+_LOGIN_RESERVATIONS_PER_PROJECT = 18
 
 
 def _login_capacity(window, now):
@@ -276,8 +277,8 @@ class BrowserLoginBudgetTests(unittest.TestCase):
                                         monotonic=self.monotonic, wait=self.wait)
 
     def test_capacity_sufficient_does_not_wait(self):
-        result = self.budget((14, self.start + _GLOBAL_LOGIN_WINDOW))
-        self.assertEqual(result, {"before_available": 16, "after_available": 16, "waited_seconds": 0.0})
+        result = self.budget((12, self.start + _GLOBAL_LOGIN_WINDOW))
+        self.assertEqual(result, {"before_available": 18, "after_available": 18, "waited_seconds": 0.0})
         self.assertEqual(self.waits, [])
 
     def test_insufficient_capacity_waits_for_actual_expiry(self):
@@ -572,7 +573,7 @@ class OperatorBrowserTests(LiveServerTestCase):
         from django.contrib.auth.models import Permission
         for project in ("desktop", "mobile"):
             for scenario in ("journey", "csrf", "denied", "revoked", "duplicate", "lost-creation", "lost-receipt", "expired",
-                             "catalog-journey", "catalog-readonly", "catalog-revoked", "catalog-stale", "catalog-lost-category", "catalog-lost-change", "catalog-variants", "catalog-variants-lost"):
+                             "catalog-journey", "catalog-readonly", "catalog-revoked", "catalog-stale", "catalog-lost-category", "catalog-lost-change", "catalog-variants", "catalog-variants-lost", "catalog-price", "catalog-price-lost"):
                 username = f"fictional-{project}-{scenario}"
                 user = get_user_model()(username=username)
                 validate_password(password, user=user)
@@ -583,6 +584,9 @@ class OperatorBrowserTests(LiveServerTestCase):
                     if scenario.startswith("catalog-"):
                         permissions = (*PERMISSIONS, "catalog.view_category", "catalog.add_category",
                                        "catalog.set_product_category", "catalog.set_product_active")
+                    if scenario in ("catalog-price", "catalog-price-lost"):
+                        permissions = (*permissions, "catalog.set_variant_price", "catalog.view_variantpricerevision",
+                                       "catalog.view_variant_price_history")
                     if scenario == "catalog-readonly":
                         permissions = ("catalog.view_product", "catalog.view_variant", "catalog.view_category")
                     for permission in permissions:
@@ -598,16 +602,18 @@ class OperatorBrowserTests(LiveServerTestCase):
                 name = f"Fictional {project} Navigation {suffix}"
                 categories[suffix] = Category.objects.create(name=name, name_key=name.casefold())
             fixture_categories[project] = categories
-            for scenario in ("catalog-readonly", "catalog-revoked", "catalog-stale", "catalog-lost-change", "catalog-variants", "catalog-variants-lost"):
+            for scenario in ("catalog-readonly", "catalog-revoked", "catalog-stale", "catalog-lost-change", "catalog-variants", "catalog-variants-lost", "catalog-price", "catalog-price-lost"):
                 category = categories["B"] if scenario in ("catalog-readonly", "catalog-revoked") else categories["A"] if scenario == "catalog-stale" else None
                 product = Product.objects.create(name=f"Fictional {project} {scenario}", category=category)
                 Variant.objects.create(product=product, label="Fictional fixture", sku=f"CATALOG-FIXTURE-{project}-{scenario}")
+                if scenario in ("catalog-price", "catalog-price-lost"):
+                    Variant.objects.create(product=product, label="Fictional alternate", sku=f"CATALOG-FIXTURE-{project}-{scenario}-alternate")
                 fixture_products[project, scenario] = product
             for index in range(51):
                 product = Product.objects.create(name=f"Fictional {project} Page {index:03}", category=categories["A"])
                 Variant.objects.create(product=product, label="Fictional page fixture", sku=f"CATALOG-FIXTURE-{project}-page-{index}")
         fixture_count = Product.objects.count()
-        self.assertEqual(fixture_count, 114)
+        self.assertEqual(fixture_count, 118)
         # No PostgreSQL/Django secret is passed to Next or Playwright.
         env = {key: os.environ[key] for key in ("PATH", "HOME", "TMPDIR", "PLAYWRIGHT_BROWSERS_PATH") if key in os.environ}
         env.update(MIRA_API_BASE_URL=self.live_server_url.replace("localhost", "127.0.0.1"), NEXT_TELEMETRY_DISABLED="1",
@@ -737,7 +743,7 @@ class OperatorBrowserTests(LiveServerTestCase):
         self.assertEqual(legacy_variants.count(), 10)
         self.assertEqual(CatalogAuditEntry.objects.filter(variant_id__in=legacy_variants.values("id")).count(), 10)
         self.assertEqual(Product.objects.count(), fixture_count + 12)
-        self.assertEqual(Variant.objects.count(), fixture_count + 16)
+        self.assertEqual(Variant.objects.count(), fixture_count + 20)
         self.assertEqual(CatalogAuditEntry.objects.count(), 16)
         self.assertEqual(StockPosition.objects.count(), 8)
         self.assertEqual(StockMovement.objects.count(), 8)
@@ -806,3 +812,19 @@ class OperatorBrowserTests(LiveServerTestCase):
                 self.assertFalse(VariantPriceRevision.objects.filter(variant_id=variant.pk).exists())
                 self.assertFalse(VariantMeasurementSpec.objects.filter(variant_id=variant.pk).exists())
         print("VARIANT_BROWSER_PERSISTENCE_PASS: 4 additions/audits; only explicit receipts, no price or measurement", flush=True)
+
+        self.assertEqual(VariantPriceRevision.objects.count(), 6)
+        self.assertEqual(CatalogPriceAuditEntry.objects.count(), 6)
+        for project in ("desktop", "mobile"):
+            for scenario, amounts in (("catalog-price", ["12.30", "14.50"]), ("catalog-price-lost", ["19.90"])):
+                product = fixture_products[project, scenario]
+                variant = product.variants.get(sku=f"CATALOG-FIXTURE-{project}-{scenario}")
+                revisions = list(VariantPriceRevision.objects.filter(variant=variant).order_by("sequence"))
+                self.assertEqual([str(item.amount) for item in revisions], amounts)
+                self.assertFalse(VariantPriceRevision.objects.filter(variant__sku=f"CATALOG-FIXTURE-{project}-{scenario}-alternate").exists())
+                actor = str(accounts[f"fictional-{project}-{scenario}"])
+                entries = list(CatalogPriceAuditEntry.objects.filter(variant_id=variant.pk).order_by("occurred_at"))
+                self.assertEqual(len(entries), len(revisions))
+                self.assertTrue(all(entry.actor_id == actor for entry in entries))
+                self.assertEqual([item.sequence for item in revisions], list(range(1, len(revisions) + 1)))
+        print("PRICE_BROWSER_PERSISTENCE_PASS: 6 revisions/audits; no-op, conflict and lost response did not duplicate writes", flush=True)

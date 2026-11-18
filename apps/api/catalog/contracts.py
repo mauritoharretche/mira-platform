@@ -22,6 +22,12 @@ class PriceSnapshot:
     recorded_at: datetime
 
 
+@dataclass(frozen=True)
+class PriceHistoryPage:
+    items: tuple[PriceSnapshot, ...]
+    next_before_sequence: int | None
+
+
 class MeasurementUnit(Enum):
     EACH = "EACH"
     G = "G"

@@ -12,7 +12,7 @@ from audit.models import CatalogAuditEntry, CatalogChangeAuditEntry, CatalogPric
 from catalog.application import (
     CatalogValidationError, PriceConflictError, VariantNotFoundError,
     add_variant_to_product, create_product_with_initial_variant, get_current_variant_price,
-    get_product, list_variant_price_history, set_variant_price,
+    get_product, list_variant_price_history, list_variant_price_history_page, set_variant_price,
 )
 from catalog.contracts import PriceBasis, PriceSnapshot
 from catalog.models import Category, Product, Variant, VariantPriceRevision
@@ -81,6 +81,22 @@ class PricingApplicationTests(TestCase):
                               currency="ARS", expected_revision_id=None)
         self.assertFalse(VariantPriceRevision.objects.exists())
         self.assertFalse(CatalogPriceAuditEntry.objects.exists())
+
+    def test_bounded_history_page_preserves_sequence_and_rejects_bad_cursor(self):
+        previous = None
+        for number in range(52):
+            previous = self.set_price(Decimal(number + 1), expected=previous.revision_id if previous else None)
+        first = list_variant_price_history_page(principal=self.principal, variant_id=self.variant.id)
+        self.assertEqual([item.sequence for item in first.items], list(range(52, 2, -1)))
+        self.assertEqual(first.next_before_sequence, 3)
+        second = list_variant_price_history_page(principal=self.principal, variant_id=self.variant.id,
+                                                 before_sequence=first.next_before_sequence)
+        self.assertEqual([item.sequence for item in second.items], [2, 1])
+        self.assertIsNone(second.next_before_sequence)
+        for cursor in (0, -1, True, "3", 9223372036854775808):
+            with self.subTest(cursor=cursor), self.assertRaises(CatalogValidationError):
+                list_variant_price_history_page(principal=self.principal, variant_id=self.variant.id,
+                                                before_sequence=cursor)
 
     def test_history_preserves_earlier_values_and_return_to_an_older_amount_is_new(self):
         first = self.set_price(Decimal("10"))

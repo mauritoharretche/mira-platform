@@ -110,6 +110,6 @@ export function ProductClassificationPanel({ product, locked, acquire, release, 
         {!product.is_active && !product.category_id && <p className="caption">Asigná una categoría antes de activar.</p>}
       </div>
     </div>
-    <p className="caption">Activo no significa publicado, disponible ni vendible.</p><details className="technical-details"><summary>Alcance de esta pantalla</summary><p>Los editores de precios y medición no están incluidos aquí; eso no indica ausencia de esos datos.</p></details>
+    <p className="caption">Activo no significa publicado, disponible ni vendible. La medición comercial se administra por separado.</p>
   </section>;
 }
