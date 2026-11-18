@@ -142,11 +142,13 @@ lifecycle evidence and delete no unrelated files/processes.
 
 ## 13. Dependencies and limitations
 
-No new package, runtime, cloud resource or provider. Use existing installed Chrome
+The interactive-demo increment added no package, runtime, cloud resource or provider.
+Use existing installed Chrome
 for manual review; do not install it automatically. The preexisting moderate
-minimatch advisory remains an explicitly failing full development audit, accepted
-only for isolated fictional demonstration; production audit was previously clean.
-Do not suppress warnings or change versions. Old ADR-020/ADR-021 runbook status
+minimatch advisory was temporarily accepted only for isolated fictional
+demonstration. SEC-01 resolves the affected minimatch dependency; the full audit
+still fails on a separate picomatch advisory, while the production audit reports
+zero findings. Do not suppress warnings. Old ADR-020/ADR-021 runbook status
 references remain historical inconsistencies; accepted ADRs are authoritative.
 MFA and real administrative exposure remain separately gated.
 

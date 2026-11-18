@@ -167,16 +167,15 @@ Retain lint, strict typecheck, Vitest, production build, production/full depende
 audit, delivery tests and diff/secret checks. Preserve the four required GitHub
 checks; E2E executes within backend, not a new protection context.
 
-## Temporary dependency-risk disposition
+## Dependency-risk disposition and SEC-01 update
 
-GHSA-g3hv-75wg-m249 / CVE-2026-118764 is a moderate, preexisting, development-only
-minimatch dependency inherited through ESLint. The maintainer's explicit temporary
-acceptance is restricted to this isolated local demonstration. The production
-dependency audit reports zero findings; the full dependency audit still fails and
-must be reported as failing. Keep both audit commands and all warnings visible.
-Do not change versions or suppress the advisory in this functional increment.
-Remediation requires a separately reviewed and compatibility-tested dependency
-update. This temporary disposition does not authorize production deployment or
+GHSA-g3hv-75wg-m249 / CVE-2026-118764 was a moderate, development-only
+minimatch finding inherited through ESLint. Its temporary acceptance covered
+only the isolated local demonstration. SEC-01 updates the affected tooling to
+resolve minimatch 11; minimatch 3 remains for legacy ESLint plugins. Recheck
+both audit commands without suppression: the production audit reports zero
+findings, while the full audit remains FAIL because of a separate picomatch
+advisory. This dependency change does not authorize production deployment or
 real operator exposure.
 
 ## Review and recovery
