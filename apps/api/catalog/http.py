@@ -2,6 +2,7 @@
 import base64
 import binascii
 import re
+from decimal import Decimal, InvalidOperation
 from uuid import UUID
 
 from django.db import IntegrityError, transaction
@@ -242,3 +243,88 @@ class ProductVariantsView(OperatorAPIView):
             raise
         return Response({"id": str(variant.pk), "label": variant.label,
                          "sku": variant.sku, "barcode": variant.barcode}, status=201)
+
+
+def _price_payload(price):
+    if price is None:
+        return None
+    return {"revision_id": str(price.revision_id), "variant_id": str(price.variant_id),
+            "sequence": str(price.sequence), "amount": format(price.amount, ".2f"),
+            "currency": price.currency, "price_basis": price.price_basis.value,
+            "recorded_at": price.recorded_at.isoformat()}
+
+
+class PriceInput(StrictSerializer):
+    amount = StrictTextField(max_length=64, trim_whitespace=False)
+    currency = StrictTextField(max_length=3, trim_whitespace=False)
+    expected_revision_id = StrictTextField(max_length=36, trim_whitespace=False, allow_null=True)
+
+    def validate_amount(self, value):
+        if not re.fullmatch(r"(?:0|[1-9][0-9]{0,11})(?:\.[0-9]+)?", value, flags=re.ASCII):
+            raise serializers.ValidationError("A plain decimal amount is required.")
+        try:
+            return Decimal(value)
+        except InvalidOperation:
+            raise serializers.ValidationError("Invalid decimal amount.") from None
+
+    def validate_currency(self, value):
+        if value != "ARS":
+            raise serializers.ValidationError("Only ARS is supported.")
+        return value
+
+    def validate_expected_revision_id(self, value):
+        return _uuid(value, "expected_revision_id") if value is not None else None
+
+
+class VariantPriceView(OperatorAPIView):
+    http_method_names = ["get", "post", "options"]
+
+    def get(self, request, variant_id):
+        require_capability(principal=request.user, capability=Capability.READ_VARIANT_PRICE)
+        _query(request, set())
+        identifier = _uuid(variant_id, "variant_id")
+        try:
+            price = application.get_current_variant_price(principal=request.user, variant_id=identifier)
+        except application.VariantNotFoundError:
+            return error_response("not_found", 404)
+        return Response({"price": _price_payload(price)})
+
+    def post(self, request, variant_id):
+        require_capability(principal=request.user, capability=Capability.SET_VARIANT_PRICE)
+        _query(request, set())
+        identifier = _uuid(variant_id, "variant_id")
+        serializer = PriceInput(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            price = application.set_variant_price(
+                principal=request.user, variant_id=identifier, **serializer.validated_data,
+            )
+        except application.VariantNotFoundError:
+            return error_response("not_found", 404)
+        except application.PriceConflictError:
+            return error_response("price_conflict", 409)
+        except application.CatalogValidationError:
+            return error_response("validation_error", 400)
+        return Response({"price": _price_payload(price)})
+
+
+class VariantPriceHistoryView(OperatorAPIView):
+    http_method_names = ["get", "options"]
+
+    def get(self, request, variant_id):
+        require_capability(principal=request.user, capability=Capability.READ_VARIANT_PRICE_HISTORY)
+        _query(request, {"before_sequence"})
+        identifier = _uuid(variant_id, "variant_id")
+        before = request.query_params.get("before_sequence")
+        if before is not None:
+            if not re.fullmatch(r"[1-9][0-9]{0,18}", before, flags=re.ASCII) or int(before) > 9223372036854775807:
+                raise serializers.ValidationError({"before_sequence": ["A canonical positive sequence is required."]})
+            before = int(before)
+        try:
+            page = application.list_variant_price_history_page(
+                principal=request.user, variant_id=identifier, before_sequence=before,
+            )
+        except application.VariantNotFoundError:
+            return error_response("not_found", 404)
+        return Response({"revisions": [_price_payload(price) for price in page.items],
+                         "next_cursor": str(page.next_before_sequence) if page.next_before_sequence else None})

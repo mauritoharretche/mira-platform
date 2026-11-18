@@ -208,3 +208,35 @@ stock creation. CI-01 remains an independent unresolved catalog-journey failure.
 The known minimatch full-audit FAIL and historical ADR status references above
 remain exceptions. Only the verified native test_mira runner may execute fixtures;
 no development mira access, real accounts, external exposure or deployment is allowed.
+
+## PC-01: Variant price in the operator workspace (Accepted ADR-024)
+
+The price panel is scoped to the selected Variant. It displays the current ARS
+amount per Variant, an exact-decimal editor and revision history. It does not
+infer units from net content, SKU or Inventory, and administrative activation is
+not a statement that a product is sellable. A missing price is distinct from
+zero. The general Product response does not include price.
+
+`GET /catalog/variants/{id}/price` requires `catalog.read_variant_price`.
+`POST` on the same route requires `catalog.set_variant_price` independently and
+accepts `amount` as a plain decimal string, `currency: "ARS"`, and mandatory
+`expected_revision_id` (null for first price). A stale expectation is 409; a
+matching amount and revision is a no-op. `GET .../price/revisions` requires
+`catalog.read_variant_price_history` and returns at most 50 descending records
+with an exclusive `before_sequence` cursor. The session capability list is only
+a UI hint; each route performs fresh server-side authorization before input or
+existence checks. No permissions are assigned automatically.
+
+During a pending write, the workspace blocks selection and competing writes.
+On 409, the entered amount remains visible. The operator must consult the current
+price and explicitly choose **Editar sobre esta revisión** before saving. A
+network loss or invalid write response leaves the outcome uncertain and blocks
+another POST for that Variant in the mounted workspace, even after a read or
+switch to a sibling Variant. Reading a current price cannot prove who wrote it.
+The history is bounded and may be refreshed after a confirmed write; it is not
+a write receipt. No automatic POST retry is performed.
+
+The operator routes remain disabled by default. Browser fixtures are fictional
+and run only through the native runner after SQL verification of `test_mira`.
+The preexisting minimatch full dependency audit failure remains a known
+development-only exception; publication and non-test use require separate gates.

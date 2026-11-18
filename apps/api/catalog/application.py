@@ -10,7 +10,7 @@ from audit.contracts import CatalogAuditAction
 from identity import application as identity_application
 from identity.contracts import Capability
 
-from .contracts import MeasurementUnit, PriceBasis, PriceSnapshot, VariantMeasurementSpecSnapshot
+from .contracts import MeasurementUnit, PriceBasis, PriceHistoryPage, PriceSnapshot, VariantMeasurementSpecSnapshot
 from .contracts import CategoryCursor, CategoryPage, CategorySummary, ProductPage, ProductSummary
 from .models import Category, Product, Variant, VariantMeasurementSpec, VariantPriceRevision
 
@@ -383,6 +383,26 @@ def list_variant_price_history(*, principal: object, variant_id: UUID) -> tuple[
         variant_id=variant.id
     ).order_by("-sequence")
     return tuple(_price_snapshot(revision) for revision in revisions)
+
+
+def list_variant_price_history_page(
+    *, principal: object, variant_id: UUID, before_sequence: int | None = None,
+) -> PriceHistoryPage:
+    """Read at most one bounded page without evaluating the full revision history."""
+    identity_application.require_capability(
+        principal=principal, capability=Capability.READ_VARIANT_PRICE_HISTORY
+    )
+    if before_sequence is not None and (
+        type(before_sequence) is not int or not 1 <= before_sequence <= 9223372036854775807
+    ):
+        raise CatalogValidationError("before_sequence must be a positive bigint or None")
+    variant = _get_price_variant(variant_id)
+    query = VariantPriceRevision.objects.using("default").filter(variant_id=variant.id)
+    if before_sequence is not None:
+        query = query.filter(sequence__lt=before_sequence)
+    rows = list(query.order_by("-sequence")[:51])
+    items = tuple(_price_snapshot(row) for row in rows[:50])
+    return PriceHistoryPage(items=items, next_before_sequence=items[-1].sequence if len(rows) > 50 else None)
 
 
 class MeasurementSpecConflictError(RuntimeError):

@@ -22,6 +22,7 @@ class CatalogModuleBoundaryTests(SimpleTestCase):
                 "create_product_with_initial_variant", "add_variant_to_product", "get_product",
                 "create_category", "list_categories", "set_product_category", "set_product_active",
                 "set_variant_price", "get_current_variant_price", "list_variant_price_history",
+                "list_variant_price_history_page",
                 "set_variant_measurement_spec", "get_variant_measurement_spec",
                 "list_products", "list_category_page",
             },
