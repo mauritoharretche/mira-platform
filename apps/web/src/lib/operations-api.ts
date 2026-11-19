@@ -27,6 +27,64 @@ export type Movement = { movement_id: string; sequence: string; kind: "RECEIPT" 
 export type History = { movements: Movement[]; next_cursor: string | null };
 export type Price = { revision_id: string; variant_id: string; sequence: string; amount: string; currency: "ARS"; price_basis: "PER_VARIANT"; recorded_at: string };
 export type PriceHistory = { revisions: Price[]; next_cursor: string | null };
+export type MeasurementUnit = "EACH" | "G" | "KG";
+export type MeasurementSpec = { spec_id: string; variant_id: string; version: string;
+  sale_unit: MeasurementUnit | null; net_content_amount: string | null;
+  net_content_unit: "G" | "KG" | null; created_at: string; updated_at: string };
+
+export type OperationPermit = { readonly id: symbol;
+  readonly operation: "classification" | "variant" | "stock" | "history" | "price" | "measurement";
+  readonly productId: string };
+
+export class OperationPermitCoordinator {
+  private active: OperationPermit | null = null;
+  get busy() { return this.active !== null; }
+  acquire(operation: OperationPermit["operation"], productId: string): OperationPermit | null {
+    if (this.active) return null;
+    const permit = { id: Symbol(operation), operation, productId };
+    this.active = permit;
+    return permit;
+  }
+  release(permit: OperationPermit): boolean {
+    if (this.active !== permit) return false;
+    this.active = null;
+    return true;
+  }
+}
+
+export function normalizeMeasurementAmount(value: string): string | null {
+  if (!/^(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,6})?$/.test(value)) return null;
+  const [whole, fraction = ""] = value.split(".");
+  if (whole === "0" && (!fraction || /^0+$/.test(fraction))) return null;
+  return `${whole}.${fraction.padEnd(6, "0")}`;
+}
+
+function validMeasurementTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?(Z|[+-](\d{2}):(\d{2}))$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]), month = Number(match[2]), day = Number(match[3]);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return year > 0 && month >= 1 && month <= 12 && day >= 1 && day <= days[month - 1]
+    && Number(match[4]) <= 23 && Number(match[5]) <= 59 && Number(match[6]) <= 59
+    && (match[7] === "Z" || Number(match[8]) <= 14 && Number(match[9]) <= 59 &&
+        !(Number(match[8]) === 14 && Number(match[9]) !== 0))
+    && Number.isFinite(Date.parse(value));
+}
+
+export function validMeasurementSpec(value: unknown, variantId: string): value is MeasurementSpec {
+  if (!value || typeof value !== "object") return false;
+  const spec = value as Partial<MeasurementSpec>;
+  const uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+  return typeof spec.spec_id === "string" && uuid.test(spec.spec_id)
+    && spec.variant_id === variantId && typeof spec.version === "string" && validPositiveInteger(spec.version)
+    && (spec.sale_unit === null || spec.sale_unit === "EACH" || spec.sale_unit === "G" || spec.sale_unit === "KG")
+    && (spec.net_content_amount === null && spec.net_content_unit === null ||
+        typeof spec.net_content_amount === "string" && normalizeMeasurementAmount(spec.net_content_amount) === spec.net_content_amount &&
+        (spec.net_content_unit === "G" || spec.net_content_unit === "KG"))
+    && validMeasurementTimestamp(spec.created_at) && validMeasurementTimestamp(spec.updated_at);
+}
 
 export function normalizePriceInput(value: string): string | null {
   const normalized = value.trim().replace(",", ".");
@@ -71,6 +129,7 @@ export function messageFor(error: unknown): string {
     category_conflict: "Ya existe una categoría con ese nombre. Consultá las categorías antes de continuar.",
     stock_conflict: "El stock ya fue inicializado. Consultá el saldo y los movimientos antes de continuar.",
     price_conflict: "La revisión de precio cambió. Consultá el precio vigente antes de decidir una nueva edición.",
+    measurement_conflict: "La versión de medición cambió. Consultá la declaración vigente antes de decidir una nueva edición.",
     not_found: "No encontramos el registro solicitado o el entorno operativo no está habilitado.",
     validation_error: "Revisá los datos indicados antes de continuar.",
     unavailable: "El servicio no está disponible. No reenvíes una escritura sin verificar su resultado.",

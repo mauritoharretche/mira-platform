@@ -163,6 +163,10 @@ th { font-size: .75rem; color: var(--muted); background: #f6f8f6; }
 .stock-grid .panel h2 { margin-bottom: .5rem; }
 .stock-grid .panel > .button-quiet { margin-top: .5rem; }
 .stock-grid .empty-state { padding: .5rem 0; margin-bottom: 0; font-weight: 650; }
+.measurement-panel { margin-top: 1rem; }
+.measurement-panel form { margin-top: 1rem; }
+.measurement-panel fieldset { display: grid; gap: .5rem; }
+.measurement-panel .notice { margin-top: .75rem; }
 .movement-panel { margin-top: 1rem; }
 .movement-panel h2 { margin-bottom: .5rem; }
 .movement-panel td, .movement-panel th { padding-block: .55rem; }

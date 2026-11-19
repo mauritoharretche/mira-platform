@@ -8,8 +8,8 @@ from django.db import DatabaseError
 from django.test import SimpleTestCase, TestCase
 
 from audit import application as audit_application
-from audit.models import CatalogAuditEntry
-from catalog.models import Product, Variant
+from audit.models import CatalogAuditEntry, CatalogMeasurementAuditEntry
+from catalog.models import Product, Variant, VariantMeasurementSpec
 from identity.tests.test_http_authentication import PREFIX, make_operator, operator_client, sign_in
 from inventory.tests.test_application import assert_test_database
 
@@ -230,3 +230,99 @@ class VariantAdapterTests(SimpleTestCase):
                 response = self.call({"label": "x", "sku": "x"})
                 self.assertEqual(response.status_code, status)
                 self.assertEqual(json.loads(response.content), {"error": {"code": code}})
+
+
+class MeasurementHTTPTests(TestCase):
+    def setUp(self):
+        assert_test_database(self)
+        self.user = make_operator(permissions=("catalog.view_variantmeasurementspec", "catalog.set_variant_measurement_spec"))
+        self.client = operator_client()
+        self.token = sign_in(self.client).json()["csrf_token"]
+        product = Product.objects.create(name="Fictional measurement product")
+        self.variant = Variant.objects.create(product=product, label="Fictional pack", sku="MEASURE-HTTP-01")
+        self.path = PREFIX + f"/catalog/variants/{self.variant.pk}/measurement-spec"
+        self.payload = {"sale_unit": "EACH", "net_content_amount": "250.000000", "net_content_unit": "G", "expected_version": None}
+
+    def write(self, payload=None, path=None):
+        return self.client.post(path or self.path, self.payload if payload is None else payload,
+                                content_type="application/json", secure=True, HTTP_X_CSRFTOKEN=self.token)
+
+    def test_absent_created_replaced_cleared_and_noop_preserve_audit(self):
+        self.assertEqual(self.client.get(self.path, secure=True).json(), {"spec": None})
+        unknown = {"sale_unit": None, "net_content_amount": None, "net_content_unit": None, "expected_version": None}
+        self.assertEqual(self.write(unknown).json(), {"spec": None})
+        self.assertFalse(VariantMeasurementSpec.objects.exists())
+        first = self.write().json()["spec"]
+        self.assertEqual((first["version"], first["sale_unit"], first["net_content_amount"], first["net_content_unit"]),
+                         ("1", "EACH", "250.000000", "G"))
+        self.assertEqual(first["variant_id"], str(self.variant.pk))
+        self.assertEqual(self.client.get(self.path, secure=True).json()["spec"], first)
+        noop = self.write({**self.payload, "net_content_amount": "250.0000000", "expected_version": "1"})
+        self.assertEqual(noop.status_code, 200)
+        self.assertEqual(noop.json()["spec"], first)
+        cleared = self.write({**unknown, "expected_version": "1"}).json()["spec"]
+        self.assertEqual(cleared["version"], "2")
+        self.assertEqual((cleared["sale_unit"], cleared["net_content_amount"], cleared["net_content_unit"]), (None, None, None))
+        self.assertEqual(cleared["spec_id"], first["spec_id"])
+        self.assertEqual(CatalogMeasurementAuditEntry.objects.count(), 2)
+        self.assertEqual(list(CatalogMeasurementAuditEntry.objects.order_by("new_version").values_list("new_version", flat=True)), [1, 2])
+        self.assertTrue(all(entry.actor_id == str(self.user.pk) for entry in CatalogMeasurementAuditEntry.objects.all()))
+
+    def test_stale_identical_write_conflicts_without_new_audit(self):
+        self.assertEqual(self.write().status_code, 200)
+        response = self.write({**self.payload, "expected_version": None})
+        self.assertEqual((response.status_code, response.json()), (409, {"error": {"code": "measurement_conflict"}}))
+        self.assertEqual((VariantMeasurementSpec.objects.get().version, CatalogMeasurementAuditEntry.objects.count()), (1, 1))
+
+    def test_permission_is_independent_and_precedes_input_and_existence(self):
+        read = self.user.user_permissions.get(codename="view_variantmeasurementspec")
+        write = self.user.user_permissions.get(codename="set_variant_measurement_spec")
+        self.user.user_permissions.remove(read)
+        self.assertEqual(self.client.get(self.path, secure=True).status_code, 403)
+        self.assertEqual(self.write().status_code, 200)  # Backend write does not require read permission.
+        self.user.user_permissions.add(read)
+        self.user.user_permissions.remove(write)
+        self.assertEqual(self.client.get(self.path, secure=True).status_code, 200)
+        with patch("catalog.application.set_variant_measurement_spec") as setter:
+            self.assertEqual(self.write({"actor": "fictional"}, PREFIX + "/catalog/variants/invalid/measurement-spec").status_code, 403)
+        setter.assert_not_called()
+        self.user.user_permissions.remove(read)
+        with patch("catalog.application.get_variant_measurement_spec") as getter:
+            self.assertEqual(self.client.get(PREFIX + "/catalog/variants/invalid/measurement-spec?unknown=1", secure=True).status_code, 403)
+        getter.assert_not_called()
+
+    def test_rejects_noncanonical_and_invalid_inputs_without_writes(self):
+        invalid = [
+            {**self.payload, "expected_version": 1}, {**self.payload, "expected_version": "01"},
+            {**self.payload, "expected_version": "9223372036854775808"},
+            {**self.payload, "sale_unit": "each"}, {**self.payload, "sale_unit": 1},
+            {**self.payload, "net_content_amount": 250}, {**self.payload, "net_content_amount": "1e2"},
+            {**self.payload, "net_content_amount": "0"}, {**self.payload, "net_content_amount": "1.0000001"},
+            {**self.payload, "net_content_amount": None}, {**self.payload, "net_content_unit": "EACH"},
+            {**self.payload, "net_content_unit": None}, {**self.payload, "actor": "fictional"},
+            {key: value for key, value in self.payload.items() if key != "expected_version"},
+        ]
+        for payload in invalid:
+            with self.subTest(payload=payload):
+                self.assertEqual(self.write(payload).status_code, 400)
+        self.assertEqual(self.write(path=self.path + "?extra=1").status_code, 400)
+        self.assertEqual(self.client.get(self.path + "?extra=1", secure=True).status_code, 400)
+        self.assertEqual(self.client.get(PREFIX + "/catalog/variants/invalid/measurement-spec", secure=True).status_code, 400)
+        self.assertEqual(self.write(path=PREFIX + "/catalog/variants/" + str(uuid4()) + "/measurement-spec").status_code, 404)
+        self.assertFalse(VariantMeasurementSpec.objects.exists())
+        self.assertFalse(CatalogMeasurementAuditEntry.objects.exists())
+
+    def test_csrf_anonymous_and_audit_failure_roll_back(self):
+        self.assertEqual(self.client.post(self.path, self.payload, content_type="application/json", secure=True).status_code, 403)
+        self.assertEqual(operator_client().get(self.path, secure=True).status_code, 403)
+        original = audit_application.record_variant_measurement_spec_changed
+        for after in (False, True):
+            def fail(**kwargs):
+                if after:
+                    original(**kwargs)
+                raise DatabaseError("fictional private exception")
+            with self.subTest(after=after), patch.object(audit_application, "record_variant_measurement_spec_changed", side_effect=fail):
+                response = self.write()
+                self.assertEqual((response.status_code, response.json()), (503, {"error": {"code": "unavailable"}}))
+                self.assertFalse(VariantMeasurementSpec.objects.exists())
+                self.assertFalse(CatalogMeasurementAuditEntry.objects.exists())

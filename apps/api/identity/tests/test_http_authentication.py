@@ -200,3 +200,23 @@ class CatalogSurfaceCapabilityTests(TestCase):
                               ["catalog.read_variant_price", "catalog.read_variant_price_history"])
         group.permissions.clear()
         self.assertEqual(client.get(PREFIX + "/auth/session", secure=True).json()["capabilities"], [])
+
+    def test_measurement_session_hints_are_independent_and_revocable(self):
+        assert_test_database(self)
+        user = make_operator(permissions=())
+        client = operator_client()
+        sign_in(client)
+        read = Permission.objects.get(content_type__app_label="catalog", codename="view_variantmeasurementspec")
+        write = Permission.objects.get(content_type__app_label="catalog", codename="set_variant_measurement_spec")
+        self.assertEqual(client.get(PREFIX + "/auth/session", secure=True).json()["capabilities"], [])
+        user.user_permissions.add(write)
+        self.assertEqual(client.get(PREFIX + "/auth/session", secure=True).json()["capabilities"], ["catalog.set_variant_measurement_spec"])
+        group = Group.objects.create(name="Fictional measurement readers")
+        group.permissions.add(read)
+        user.groups.add(group)
+        self.assertCountEqual(client.get(PREFIX + "/auth/session", secure=True).json()["capabilities"],
+                              ["catalog.set_variant_measurement_spec", "catalog.read_variant_measurement_spec"])
+        user.user_permissions.remove(write)
+        self.assertEqual(client.get(PREFIX + "/auth/session", secure=True).json()["capabilities"], ["catalog.read_variant_measurement_spec"])
+        group.permissions.clear()
+        self.assertEqual(client.get(PREFIX + "/auth/session", secure=True).json()["capabilities"], [])

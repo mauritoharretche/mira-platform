@@ -16,5 +16,6 @@
 | [ADR-022](adr/ADR-022-runner-controlled-interactive-demo.md) | Native-runner-controlled interactive demonstration | Accepted | 2026-11-09 |
 | [ADR-023](adr/ADR-023-operator-variant-management.md) | Operator variant management | Accepted | 2026-11-16 |
 | [ADR-024](adr/ADR-024-operator-variant-pricing.md) | Operator variant pricing | Accepted | 2026-11-17 |
+| [ADR-025](adr/ADR-025-operator-variant-measurements.md) | Operator variant measurement declarations | Accepted | 2026-11-18 |
 
 See `adr/ADR-TEMPLATE.md` for the required format.

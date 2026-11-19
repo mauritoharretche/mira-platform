@@ -26,7 +26,7 @@ from django.test import LiveServerTestCase, override_settings
 from django.utils import timezone
 from django.utils.crypto import salted_hmac
 
-from audit.models import CatalogAuditEntry, CatalogChangeAuditEntry, CatalogPriceAuditEntry, InventoryMovementAuditEntry
+from audit.models import CatalogAuditEntry, CatalogChangeAuditEntry, CatalogMeasurementAuditEntry, CatalogPriceAuditEntry, InventoryMovementAuditEntry
 from catalog.models import Category, Product, Variant, VariantPriceRevision
 from identity.models import LoginAttemptWindow
 from identity.tests.test_http_authentication import PERMISSIONS
@@ -587,6 +587,8 @@ class OperatorBrowserTests(LiveServerTestCase):
                     if scenario in ("catalog-price", "catalog-price-lost"):
                         permissions = (*permissions, "catalog.set_variant_price", "catalog.view_variantpricerevision",
                                        "catalog.view_variant_price_history")
+                    if scenario == "catalog-price":
+                        permissions = (*permissions, "catalog.set_variant_measurement_spec", "catalog.view_variantmeasurementspec")
                     if scenario == "catalog-readonly":
                         permissions = ("catalog.view_product", "catalog.view_variant", "catalog.view_category")
                     for permission in permissions:
@@ -828,3 +830,19 @@ class OperatorBrowserTests(LiveServerTestCase):
                 self.assertTrue(all(entry.actor_id == actor for entry in entries))
                 self.assertEqual([item.sequence for item in revisions], list(range(1, len(revisions) + 1)))
         print("PRICE_BROWSER_PERSISTENCE_PASS: 6 revisions/audits; no-op, conflict and lost response did not duplicate writes", flush=True)
+        from catalog.models import VariantMeasurementSpec
+        self.assertEqual(VariantMeasurementSpec.objects.count(), 2)
+        self.assertEqual(CatalogMeasurementAuditEntry.objects.count(), 4)
+        for project in ("desktop", "mobile"):
+            product = fixture_products[project, "catalog-price"]
+            variant = product.variants.get(sku=f"CATALOG-FIXTURE-{project}-catalog-price")
+            spec = VariantMeasurementSpec.objects.get(variant=variant)
+            self.assertEqual((spec.version, spec.sale_unit, str(spec.net_content_amount), spec.net_content_unit),
+                             (2, "EACH", "500.000000", "G"))
+            self.assertFalse(VariantMeasurementSpec.objects.filter(variant__sku=f"CATALOG-FIXTURE-{project}-catalog-price-alternate").exists())
+            entries = list(CatalogMeasurementAuditEntry.objects.filter(variant_id=variant.pk).order_by("new_version"))
+            self.assertEqual([entry.new_version for entry in entries], [1, 2])
+            self.assertTrue(all(entry.actor_id == str(accounts[f"fictional-{project}-catalog-price"]) for entry in entries))
+            self.assertEqual([(entry.new_net_content_amount, entry.new_net_content_unit) for entry in entries],
+                             [(spec.net_content_amount / 2, "G"), (spec.net_content_amount, "G")])
+        print("MEASUREMENT_BROWSER_PERSISTENCE_PASS: 2 specifications; 4 versions/audits; no-op, conflict and malformed response did not duplicate writes", flush=True)

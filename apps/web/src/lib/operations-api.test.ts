@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clearOperatorState, formatPriceARS, messageFor, normalizePriceInput, OperatorError, request, signIn, validPositiveInteger } from "./operations-api";
+import { clearOperatorState, formatPriceARS, messageFor, normalizeMeasurementAmount, normalizePriceInput, OperationPermitCoordinator, OperatorError, request, signIn, validMeasurementSpec, validPositiveInteger } from "./operations-api";
 
 afterEach(() => { clearOperatorState(); vi.unstubAllGlobals(); });
 
@@ -91,5 +91,57 @@ describe("variant price presentation", () => {
     await expect(request("/catalog/variants/id/price", { method: "POST" }, fetcher))
       .rejects.toMatchObject({ code: "price_conflict", uncertain: false });
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("variant measurement presentation", () => {
+  const variantId = "00000000-0000-4000-8000-000000000001";
+  const spec = { spec_id: "00000000-0000-4000-8000-000000000002", variant_id: variantId,
+    version: "9007199254740993", sale_unit: "EACH", net_content_amount: "250.000000", net_content_unit: "G",
+    created_at: "2026-11-18T12:00:00+00:00", updated_at: "2026-11-18T12:00:00+00:00" };
+
+  it("normalizes exact positive decimals using strings only", () => {
+    expect(normalizeMeasurementAmount("0.000001")).toBe("0.000001");
+    expect(normalizeMeasurementAmount("250.0")).toBe("250.000000");
+    expect(normalizeMeasurementAmount("999999999999.999999")).toBe("999999999999.999999");
+    for (const value of ["0", "0.000000", "-1", "1e3", "1.0000001", "1000000000000", " 1", "１.０"])
+      expect(normalizeMeasurementAmount(value)).toBeNull();
+  });
+
+  it("validates identity, version, units, paired net content and timestamps", () => {
+    expect(validMeasurementSpec(spec, variantId)).toBe(true);
+    expect(validMeasurementSpec({ ...spec, sale_unit: null, net_content_amount: null, net_content_unit: null }, variantId)).toBe(true);
+    for (const value of [{ ...spec, version: 9007199254740993 }, { ...spec, version: "01" },
+      { ...spec, variant_id: "00000000-0000-4000-8000-000000000099" },
+      { ...spec, sale_unit: "TON" }, { ...spec, net_content_amount: null },
+      { ...spec, net_content_unit: "EACH" }, { ...spec, net_content_amount: "1e3" },
+      { ...spec, created_at: "2026-02-30T12:00:00+00:00" }])
+      expect(validMeasurementSpec(value, variantId)).toBe(false);
+  });
+
+  it("keeps conflicts explicit, treats lost writes as uncertain and does not retry", async () => {
+    const conflict = vi.fn().mockResolvedValue(Response.json({ error: { code: "measurement_conflict" } }, { status: 409 }));
+    await expect(request("/catalog/variants/id/measurement-spec", { method: "POST" }, conflict))
+      .rejects.toMatchObject({ code: "measurement_conflict", uncertain: false });
+    expect(conflict).toHaveBeenCalledTimes(1);
+    const lost = vi.fn().mockRejectedValue(new TypeError("fictional network loss"));
+    await expect(request("/catalog/variants/id/measurement-spec", { method: "POST" }, lost))
+      .rejects.toMatchObject({ uncertain: true });
+    expect(lost).toHaveBeenCalledTimes(1);
+    expect(messageFor(new OperatorError("measurement_conflict"))).toContain("versión de medición cambió");
+  });
+
+  it("uses the existing permit and read-generation barriers", async () => {
+    const { ReadGeneration } = await import("./operations-api");
+    const permits = new OperationPermitCoordinator();
+    const token = permits.acquire("measurement", variantId);
+    expect(token).not.toBeNull();
+    expect(permits.acquire("stock", variantId)).toBeNull();
+    const stream = new ReadGeneration();
+    const old = stream.begin();
+    stream.invalidate();
+    expect(stream.accepts(old)).toBe(false);
+    expect(permits.release(token!)).toBe(true);
+    expect(permits.busy).toBe(false);
   });
 });
