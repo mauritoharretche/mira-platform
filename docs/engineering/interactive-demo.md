@@ -146,9 +146,14 @@ The interactive-demo increment added no package, runtime, cloud resource or prov
 Use existing installed Chrome
 for manual review; do not install it automatically. The preexisting moderate
 minimatch advisory was temporarily accepted only for isolated fictional
-demonstration. SEC-01 resolves the affected minimatch dependency; the full audit
-still fails on a separate picomatch advisory, while the production audit reports
-zero findings. Do not suppress warnings. Old ADR-020/ADR-021 runbook status
+demonstration. SEC-01 moved the affected tooling to minimatch 11.0.9; the lockfile
+retains minimatch 3.1.5 for legacy ESLint plugins. A later full audit failed on
+the separate picomatch advisory
+[GHSA-fc5q-39xc-vjpf](https://github.com/advisories/ghsa-fc5q-39xc-vjpf),
+which GitHub withdrew on 2026-11-18. On 2026-11-19 UTC, full and production
+audits both exited 0 with no known vulnerabilities reported. Continue both
+audits without suppression; these results do not prove all risks are absent.
+Old ADR-020/ADR-021 runbook status
 references remain historical inconsistencies; accepted ADRs are authoritative.
 MFA and real administrative exposure remain separately gated.
 

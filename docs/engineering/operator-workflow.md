@@ -171,12 +171,15 @@ checks; E2E executes within backend, not a new protection context.
 
 GHSA-g3hv-75wg-m249 / CVE-2026-118764 was a moderate, development-only
 minimatch finding inherited through ESLint. Its temporary acceptance covered
-only the isolated local demonstration. SEC-01 updates the affected tooling to
-resolve minimatch 11; minimatch 3 remains for legacy ESLint plugins. Recheck
-both audit commands without suppression: the production audit reports zero
-findings, while the full audit remains FAIL because of a separate picomatch
-advisory. This dependency change does not authorize production deployment or
-real operator exposure.
+only the isolated local demonstration. SEC-01 moved the affected tooling to
+minimatch 11.0.9; minimatch 3.1.5 remains in legacy ESLint plugins in the lockfile.
+A later full audit failed on the separate picomatch advisory
+[GHSA-fc5q-39xc-vjpf](https://github.com/advisories/ghsa-fc5q-39xc-vjpf),
+which GitHub withdrew on 2026-11-18. On 2026-11-19 UTC, both the full and
+production audits exited 0 with no known vulnerabilities reported. Keep running
+both commands without suppression: withdrawal alone and a zero-finding audit do
+not establish that all dependency risks are absent. This change does not
+authorize production deployment or real operator exposure.
 
 ## Review and recovery
 

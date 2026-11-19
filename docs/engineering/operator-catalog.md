@@ -103,10 +103,14 @@ backend, frontend, Toolchain (ubuntu-latest) and Toolchain (macos-15).
 
 GHSA-g3hv-75wg-m249 / CVE-2026-118764 was a preexisting moderate development-only
 transitive minimatch advisory. Its temporary acceptance covered isolated fictional
-demonstration only. SEC-01 updates the affected tooling to resolve minimatch 11,
-while preserving minimatch 3 for legacy ESLint plugins. The full audit remains
-FAIL because of a separate picomatch advisory; the production audit reports zero
-findings. Keep both audit commands and existing peer warnings visible.
+demonstration only. SEC-01 moved the affected tooling to minimatch 11.0.9;
+minimatch 3.1.5 remains in legacy ESLint plugins in the lockfile. A later full
+audit failed on the separate picomatch advisory
+[GHSA-fc5q-39xc-vjpf](https://github.com/advisories/ghsa-fc5q-39xc-vjpf),
+which GitHub withdrew on 2026-11-18. On 2026-11-19 UTC, the full and production
+audits both exited 0 with no known vulnerabilities reported. Keep both audit
+commands and existing peer warnings visible; withdrawal or a zero-finding audit
+does not establish that all dependency risks are absent.
 MFA remains a prerequisite before real administrative exposure.
 
 Publication requires review of the entire allowlisted patch and explicit external
@@ -154,9 +158,9 @@ stock availability and sellability.
 Store actual screenshots, measured colors/layout, test output and the complete
 nine-file canonical patch/manifest externally for independent review. Scripted
 read-response presentation tests must be labeled separately from real persisted
-browser workflows. Preserve the historical minimatch exception, current full-audit
-FAIL, production audit result and historical ADR status references above as explicit
-review limitations.
+browser workflows. Preserve the historical minimatch exception, the earlier
+picomatch full-audit FAIL, the current audit results above and historical ADR
+status references as explicit review context.
 Publication, merge, real provisioning and non-test schema use retain separate gates.
 
 ## UX-03 Retail Calm: contextual catalog navigation
@@ -206,9 +210,9 @@ BC-01A browser cases are catalog-variants and catalog-variants-lost in both proj
 The native harness retains all previous cases and checks additional persisted
 Variant/Audit correspondence, duplicate/lost-response behavior and explicit-only
 stock creation. CI-01 remains an independent unresolved catalog-journey failure.
-The historical minimatch exception, current full-audit FAIL and historical ADR
-status references above remain documented. Only the verified native test_mira
-runner may execute fixtures;
+The historical minimatch exception, earlier picomatch full-audit FAIL, current
+audit results and historical ADR status references above remain documented. Only
+the verified native test_mira runner may execute fixtures;
 no development mira access, real accounts, external exposure or deployment is allowed.
 
 ## PC-01: Variant price in the operator workspace (Accepted ADR-024)
@@ -240,8 +244,9 @@ a write receipt. No automatic POST retry is performed.
 
 The operator routes remain disabled by default. Browser fixtures are fictional
 and run only through the native runner after SQL verification of `test_mira`.
-The historical minimatch exception and current picomatch full dependency audit
-failure remain documented; publication and non-test use require separate gates.
+The historical minimatch exception and earlier picomatch full-audit failure
+remain documented above alongside the current audit results; publication and
+non-test use require separate gates.
 
 ## MS-01: Variant measurement declarations (ADR-025 Accepted)
 
