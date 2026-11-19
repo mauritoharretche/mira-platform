@@ -2,36 +2,21 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { messageFor, Product, ReadGeneration, request, Variant } from "@/lib/operations-api";
+import { messageFor, OperationPermitCoordinator, type OperationPermit, Product, ReadGeneration, request, Variant } from "@/lib/operations-api";
 import { useOperator } from "./operations-shell";
 import { ProductClassificationPanel } from "./product-classification-panel";
 import { ProductVariantPanel } from "./product-variant-panel";
 import { ProductPricePanel } from "./product-price-panel";
+import { ProductMeasurementPanel } from "./product-measurement-panel";
 import { StockPanel } from "./stock-panel";
 
-export type OperationPermit = {
-  readonly id: symbol;
-  readonly operation: "classification" | "variant" | "stock" | "history" | "price";
-  readonly productId: string;
-};
+export { OperationPermitCoordinator };
+export type { OperationPermit };
 
 export type PendingPriceConflict = { draft: string; baseRevision: string | null };
-
-export class OperationPermitCoordinator {
-  private active: OperationPermit | null = null;
-  get busy() { return this.active !== null; }
-  acquire(operation: OperationPermit["operation"], productId: string): OperationPermit | null {
-    if (this.active) return null;
-    const permit = { id: Symbol(operation), operation, productId };
-    this.active = permit;
-    return permit;
-  }
-  release(permit: OperationPermit): boolean {
-    if (this.active !== permit) return false;
-    this.active = null;
-    return true;
-  }
-}
+export type MeasurementDraft = { saleUnit: "" | "EACH" | "G" | "KG"; amount: string;
+  netUnit: "" | "G" | "KG"; baseVersion: string | null };
+export type PendingMeasurementConflict = { draft: MeasurementDraft };
 
 export function ProductWorkspace({ productId, returnHref }: { productId: string; returnHref: string }) {
   const session = useOperator();
@@ -44,6 +29,9 @@ export function ProductWorkspace({ productId, returnHref }: { productId: string;
   const [stockOutcomes, setStockOutcomes] = useState<Record<string, "confirmed" | "uncertain" | "conflict">>({});
   const [priceUncertain, setPriceUncertain] = useState<Record<string, boolean>>({});
   const [priceConflicts, setPriceConflicts] = useState<Record<string, PendingPriceConflict>>({});
+  const [measurementDrafts, setMeasurementDrafts] = useState<Record<string, MeasurementDraft>>({});
+  const [measurementConflicts, setMeasurementConflicts] = useState<Record<string, PendingMeasurementConflict>>({});
+  const [measurementUncertain, setMeasurementUncertain] = useState<Record<string, boolean>>({});
   const reads = useRef(new ReadGeneration());
   const acquire = (operation: OperationPermit["operation"]): OperationPermit | null => {
     const permit = permits.current.acquire(operation, productId);
@@ -109,6 +97,17 @@ export function ProductWorkspace({ productId, returnHref }: { productId: string;
           delete updated[variantId];
           return updated;
         })}
+        acquire={acquire} release={release} />
+      {Object.entries(measurementUncertain).filter(([id, uncertain]) => id !== variantId && uncertain).map(([id]) =>
+        <p key={`measurement-warning:${id}`} role="status" className="notice">La medición de {current.variants.find((item) => item.id === id)?.sku ?? "otra variante"} requiere revisión. Cambiar de variante no confirma ni reenvía esa escritura.</p>)}
+      <ProductMeasurementPanel key={`measurement:${productId}:${variantId}`} variantId={variantId} locked={locked}
+        savedDraft={measurementDrafts[variantId] ?? null} onDraft={(draft) => setMeasurementDrafts((previous) => ({ ...previous, [variantId]: draft }))}
+        onConfirmed={() => setMeasurementDrafts((previous) => { const next = { ...previous }; delete next[variantId]; return next; })}
+        pendingConflict={measurementConflicts[variantId] ?? null}
+        onConflict={(value) => setMeasurementConflicts((previous) => ({ ...previous, [variantId]: value }))}
+        onConflictResolved={() => setMeasurementConflicts((previous) => { const next = { ...previous }; delete next[variantId]; return next; })}
+        uncertain={measurementUncertain[variantId] ?? false}
+        onUncertain={() => setMeasurementUncertain((previous) => ({ ...previous, [variantId]: true }))}
         acquire={acquire} release={release} />
       {Object.entries(stockOutcomes).filter(([id, outcome]) => id !== variantId && outcome !== "confirmed").map(([id]) =>
         <p key={`stock-warning:${id}`} role="status" className="notice">Una recepción de {current.variants.find((item) => item.id === id)?.sku ?? "otra variante"} requiere revisión. Cambiar de selección no confirma ni reenvía esa escritura.</p>)}

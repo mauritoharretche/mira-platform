@@ -14,7 +14,7 @@ from identity.contracts import Capability
 from system.http import OperatorAPIView, StrictSerializer, StrictTextField, error_response
 
 from . import application
-from .contracts import CategoryCursor
+from .contracts import CategoryCursor, MeasurementUnit
 
 
 class ProductInput(StrictSerializer):
@@ -328,3 +328,84 @@ class VariantPriceHistoryView(OperatorAPIView):
             return error_response("not_found", 404)
         return Response({"revisions": [_price_payload(price) for price in page.items],
                          "next_cursor": str(page.next_before_sequence) if page.next_before_sequence else None})
+
+
+def _measurement_payload(spec):
+    if spec is None:
+        return None
+    return {"spec_id": str(spec.spec_id), "variant_id": str(spec.variant_id),
+            "version": str(spec.version),
+            "sale_unit": spec.sale_unit.value if spec.sale_unit is not None else None,
+            "net_content_amount": format(spec.net_content_amount, ".6f") if spec.net_content_amount is not None else None,
+            "net_content_unit": spec.net_content_unit.value if spec.net_content_unit is not None else None,
+            "created_at": spec.created_at.isoformat(), "updated_at": spec.updated_at.isoformat()}
+
+
+class MeasurementUnitField(serializers.Field):
+    def __init__(self, *, mass_only=False, **kwargs):
+        self.mass_only = mass_only
+        super().__init__(**kwargs)
+
+    def to_internal_value(self, data):
+        allowed = {"G", "KG"} if self.mass_only else {"EACH", "G", "KG"}
+        if data is None and self.allow_null:
+            return None
+        if type(data) is not str or data not in allowed:
+            raise serializers.ValidationError("A supported measurement unit is required.")
+        return MeasurementUnit(data)
+
+
+class MeasurementInput(StrictSerializer):
+    sale_unit = MeasurementUnitField(allow_null=True)
+    net_content_amount = StrictTextField(allow_null=True, trim_whitespace=False)
+    net_content_unit = MeasurementUnitField(allow_null=True, mass_only=True)
+    expected_version = StrictTextField(allow_null=True, trim_whitespace=False)
+
+    def validate_net_content_amount(self, value):
+        if value is None:
+            return None
+        if not re.fullmatch(r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?", value, flags=re.ASCII):
+            raise serializers.ValidationError("A plain decimal amount is required.")
+        try:
+            return Decimal(value)
+        except InvalidOperation:
+            raise serializers.ValidationError("Invalid decimal amount.") from None
+
+    def validate_expected_version(self, value):
+        if value is None:
+            return None
+        if not re.fullmatch(r"[1-9][0-9]{0,18}", value, flags=re.ASCII) or int(value) > 9223372036854775807:
+            raise serializers.ValidationError("A canonical positive version is required.")
+        return int(value)
+
+
+class VariantMeasurementSpecView(OperatorAPIView):
+    http_method_names = ["get", "post", "options"]
+
+    def get(self, request, variant_id):
+        require_capability(principal=request.user, capability=Capability.READ_VARIANT_MEASUREMENT_SPEC)
+        _query(request, set())
+        identifier = _uuid(variant_id, "variant_id")
+        try:
+            spec = application.get_variant_measurement_spec(principal=request.user, variant_id=identifier)
+        except application.VariantNotFoundError:
+            return error_response("not_found", 404)
+        return Response({"spec": _measurement_payload(spec)})
+
+    def post(self, request, variant_id):
+        require_capability(principal=request.user, capability=Capability.SET_VARIANT_MEASUREMENT_SPEC)
+        _query(request, set())
+        identifier = _uuid(variant_id, "variant_id")
+        serializer = MeasurementInput(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            spec = application.set_variant_measurement_spec(
+                principal=request.user, variant_id=identifier, **serializer.validated_data,
+            )
+        except application.VariantNotFoundError:
+            return error_response("not_found", 404)
+        except application.MeasurementSpecConflictError:
+            return error_response("measurement_conflict", 409)
+        except application.CatalogValidationError:
+            return error_response("validation_error", 400)
+        return Response({"spec": _measurement_payload(spec)})

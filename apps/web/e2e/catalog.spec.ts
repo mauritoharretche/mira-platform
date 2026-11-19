@@ -918,6 +918,70 @@ test("catalog-price", async ({ page }, info) => {
     expect(malformedPosts).toBe(1);
     expect(pageErrors).toEqual([]);
   } finally { await page.unroute(`**${pricePath}`); }
+
+  // Measurement uses the same fictional login, with separate read/write grants.
+  const measurementPath = `${root}/catalog/variants/${original}/measurement-spec`;
+  let measurementPosts = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === measurementPath) measurementPosts += 1;
+  });
+  await expect(page.locator(".measurement-panel")).toHaveCount(1);
+  await expect(page.getByText("Sin especificación declarada", { exact: true })).toBeVisible();
+  await page.getByLabel("Unidad comercial").selectOption("EACH");
+  await page.getByLabel("Contenido neto").fill("250");
+  await page.getByLabel("Unidad de contenido").selectOption("G");
+  const created = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === measurementPath);
+  await page.getByRole("button", { name: "Guardar medición", exact: true }).click();
+  expect((await created).status()).toBe(200);
+  await expect(page.locator(".measurement-panel .caption").first()).toContainText("Versión 1");
+  await expect(page.locator(".measurement-panel .presentation-meta")).toContainText("250.000000 G");
+  const measurementNoop = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === measurementPath);
+  await page.getByRole("button", { name: "Guardar medición", exact: true }).click();
+  expect((await measurementNoop).status()).toBe(200);
+  await expect(page.locator(".measurement-panel .caption").first()).toContainText("Versión 1");
+
+  await page.route(`**${measurementPath}`, async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    await route.fulfill({ status: 409, json: { error: { code: "measurement_conflict" } } });
+  }, { times: 1 });
+  await page.getByLabel("Contenido neto").fill("500");
+  await page.getByRole("button", { name: "Guardar medición", exact: true }).click();
+  await expect(page.locator(".measurement-panel .error-box")).toContainText("versión de medición cambió");
+  await expect(page.getByRole("button", { name: "Guardar medición", exact: true })).toBeDisabled();
+  await selector.selectOption(other);
+  await expect(page.locator(".measurement-panel")).toHaveCount(1);
+  await expect(page.getByText("Sin especificación declarada", { exact: true })).toBeVisible();
+  await expect(page.locator(".measurement-panel .error-box")).toHaveCount(0);
+  await selector.selectOption(original);
+  await expect(page.getByLabel("Contenido neto")).toHaveValue("500");
+  await expect(page.locator(".measurement-panel .error-box")).toContainText("versión de medición cambió");
+  await expect(page.getByRole("button", { name: "Editar sobre esta versión" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Consultar medición vigente" }).click();
+  await expect(page.getByRole("button", { name: "Guardar medición", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Editar sobre esta versión" })).toBeVisible();
+  expect(measurementPosts).toBe(3);
+  await page.getByRole("button", { name: "Editar sobre esta versión" }).click();
+  const replaced = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === measurementPath);
+  await page.getByRole("button", { name: "Guardar medición", exact: true }).click();
+  expect((await replaced).status()).toBe(200);
+  await expect(page.locator(".measurement-panel .caption").first()).toContainText("Versión 2");
+  await expect(page.locator(".measurement-panel .presentation-meta")).toContainText("500.000000 G");
+
+  await page.route(`**${measurementPath}`, async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    await route.fulfill({ status: 200, json: { spec: { version: "bad" } } });
+  }, { times: 1 });
+  await page.getByLabel("Contenido neto").fill("600");
+  await page.getByRole("button", { name: "Guardar medición", exact: true }).click();
+  await expect(page.locator(".measurement-panel .error-box")).toContainText("Resultado incierto");
+  await expect(page.getByRole("button", { name: "Guardar medición", exact: true })).toBeDisabled();
+  await selector.selectOption(other);
+  await selector.selectOption(original);
+  await expect(page.locator(".measurement-panel [role=status].notice")).toContainText("Resultado incierto para esta variante");
+  await page.getByRole("button", { name: "Consultar medición vigente" }).click();
+  await expect(page.getByRole("button", { name: "Guardar medición", exact: true })).toBeDisabled();
+  expect(measurementPosts).toBe(5); // Two real writes, one no-op, one conflict, one malformed response.
+  expect(pageErrors).toEqual([]);
 });
 
 test("catalog-price-lost", async ({ page }, info) => {

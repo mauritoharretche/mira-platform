@@ -242,3 +242,27 @@ The operator routes remain disabled by default. Browser fixtures are fictional
 and run only through the native runner after SQL verification of `test_mira`.
 The historical minimatch exception and current picomatch full dependency audit
 failure remain documented; publication and non-test use require separate gates.
+
+## MS-01: Variant measurement declarations (ADR-025 Accepted)
+
+The selected Variant has an independent commercial measurement panel. It shows
+the optional sale unit (`EACH`, `G`, `KG`) and optional positive net-content
+amount with unit (`G`, `KG`). An absent specification differs from an existing
+specification whose declarations are all unknown. No unit conversion, stock
+change, price reinterpretation or sellability decision follows from this panel.
+
+`GET /catalog/variants/{id}/measurement-spec` requires
+`catalog.read_variant_measurement_spec`; `POST` on the same route independently
+requires `catalog.set_variant_measurement_spec`. POST requires `sale_unit`,
+`net_content_amount`, `net_content_unit` and `expected_version`, including
+explicit nulls. Versions and exact decimals cross JSON as strings. A stale
+version returns `409 measurement_conflict`, even for an otherwise identical
+write. A matching no-op creates no new version or Audit entry. Every actual
+change and its actor are recorded in the same transaction by Catalog and Audit.
+
+The browser editor requires read and write capabilities, because it needs the
+current version. Its draft, conflict and uncertain-result state survive Variant
+switches in the mounted workspace. A conflict requires a fresh read and an
+explicit **Editar sobre esta versión** decision. A read never confirms an
+uncertain write, and no POST is retried automatically. The existing isolated
+`test_mira` runner remains the only authorized browser execution path.
