@@ -36,8 +36,8 @@ equivalent trusted external copy. Six operations are supported:
 
 | Operation | Effect |
 | --- | --- |
-| prepare | Reads Git/content; creates review artifacts outside the repository |
-| publish | Dry-run by default; execution requires all independent gates |
+| prepare | Reads Git/content and bounded public GitHub identity evidence; creates review artifacts outside the repository |
+| publish | Checks identity in dry-run and execution; execution requires all independent gates |
 | rules | Read-only configured/effective enforcement validation |
 | ci | Read-only exact-PR CI verification, optionally bounded observation |
 | merge-preview | Validates and prints a command; cannot execute a merge |
@@ -68,6 +68,37 @@ Artifacts are owner-only. Output includes manifest.json, review.patch and
 review-summary.json. The complete patch includes new files and explicit deletions.
 Review public commit identity, PR text and evidence as well as code. Artifact
 directories and files are created exclusively; existing material is not replaced.
+
+### Privacy-safe Git identity preflight
+
+`prepare`, publication dry-run and `publish --execute` read Git's effective
+`GIT_AUTHOR_IDENT` and `GIT_COMMITTER_IDENT`. Both must use a GitHub `noreply`
+address attributed to the authenticated repository owner in the corresponding
+role of a public commit. The check compares the authenticated `/user` account
+ID with the repository owner's ID and login; it does not infer ownership from
+email syntax, display names, a signature's verified flag or environment text.
+It supports GitHub's ID-based and legacy username-based `noreply` formats only
+when the exact address has matching public author or committer attribution.
+
+The search examines at most three pages of 100 commits from the approved base
+in this repository, within a 30-second observation deadline. It sends no
+candidate email in an API query, does not call `/user/emails`, and fails closed
+if evidence is unavailable, contradictory or exhausted. It requires an
+authenticated GitHub CLI but no additional scope or credential. Unlike the
+earlier local-only `prepare`, this preflight requires GitHub API availability.
+Failure messages and receipts do not echo rejected addresses.
+
+Use temporary `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME` and
+`GIT_COMMITTER_EMAIL` values only after verifying the account's actual
+`noreply` identity; do not guess an address or persist a Git configuration
+change as a workaround. Git's effective values take precedence over assumptions
+about local config. Git names must be printable Unicode; invisible formatting
+characters and controls are rejected. The deadline is checked again after API
+responses and before a successful identity result. The tool re-reads both
+identities immediately before commit and still verifies the created commit
+before push. A changed identity requires a new canonical manifest and external
+approval. This local preflight reduces
+the risk of GH007; GitHub remains the authority on whether a push is accepted.
 
 ## Canonical identity and approval
 

@@ -17,13 +17,28 @@ SPEC = importlib.util.spec_from_file_location("mira_delivery", SOURCE)
 d = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(d)
 
+FAKE_OWNER_ID = 123456789
+FAKE_NOREPLY = f"{FAKE_OWNER_ID}+mauritoharretche@users.noreply.github.com"
+FAKE_LEGACY_NOREPLY = "mauritoharretche@users.noreply.github.com"
+
+
+def attributed_commit(author_email=FAKE_NOREPLY, committer_email=FAKE_NOREPLY,
+                      *, author_id=FAKE_OWNER_ID, committer_id=FAKE_OWNER_ID):
+    return {"commit": {"author": {"email": author_email}, "committer": {"email": committer_email}},
+            "author": None if author_id is None else {"id": author_id, "login": "mauritoharretche"},
+            "committer": None if committer_id is None else {"id": committer_id, "login": "mauritoharretche"}}
+
 
 class FakeGitHub(d.GitHub):
     def __init__(self, git, base, *, protected=True):
         super().__init__()
         self.git, self.base, self.protected = git, base, protected
         self.settings = {"id": d.REPOSITORY_ID, "full_name": d.REPOSITORY,
+                         "owner": {"id": FAKE_OWNER_ID, "login": "mauritoharretche", "type": "User"},
                          "allow_squash_merge": True, "allow_auto_merge": False, "delete_branch_on_merge": False}
+        self.account_data = {"id": FAKE_OWNER_ID, "login": "mauritoharretche", "type": "User"}
+        self.identity_pages = {1: [attributed_commit()]}
+        self.identity_requests = []
         self.policy = {**copy.deepcopy(d.POLICY), "id": 7}
         self.effective = [{**copy.deepcopy(rule), "ruleset_id": 7} for rule in d.POLICY["rules"]]
         self.pr = None
@@ -32,6 +47,11 @@ class FakeGitHub(d.GitHub):
         self.fail_create = False
 
     def get(self, path):
+        if path.startswith(d.endpoint("/commits?sha=")):
+            self.identity_requests.append(path)
+            assert f"/commits?sha={self.base}&per_page=100&page=" in path
+            page = int(path.rsplit("&page=", 1)[1])
+            return copy.deepcopy(self.identity_pages.get(page, []))
         if path == d.endpoint():
             return copy.deepcopy(self.settings)
         if path == d.endpoint("/branches/main"):
@@ -43,6 +63,9 @@ class FakeGitHub(d.GitHub):
         if path.startswith(d.endpoint("/git/commits/")):
             return copy.deepcopy(self.commits[path.rsplit("/", 1)[1]])
         raise AssertionError("Unmocked GitHub GET: " + path)
+
+    def authenticated_user(self):
+        return d.validated_account(copy.deepcopy(self.account_data))
 
     def items(self, path, key=None):
         if path.startswith(d.endpoint("/rulesets?")):
@@ -104,8 +127,8 @@ class FakeGitHub(d.GitHub):
 class DeliveryTests(unittest.TestCase):
     def setUp(self):
         isolated = mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
-                     "GIT_AUTHOR_NAME": "Fictional Maintainer", "GIT_AUTHOR_EMAIL": "fictional@example.invalid",
-                     "GIT_COMMITTER_NAME": "Fictional Maintainer", "GIT_COMMITTER_EMAIL": "fictional@example.invalid"})
+                     "GIT_AUTHOR_NAME": "Fictional Maintainer", "GIT_AUTHOR_EMAIL": FAKE_NOREPLY,
+                     "GIT_COMMITTER_NAME": "Fictional Maintainer", "GIT_COMMITTER_EMAIL": FAKE_NOREPLY})
         isolated.start()
         self.addCleanup(isolated.stop)
         self.temp = tempfile.TemporaryDirectory(prefix="mira-delivery-test-")
@@ -151,7 +174,7 @@ class DeliveryTests(unittest.TestCase):
 
     def manifest(self, allowlist=None, output="review"):
         self.write("sample.txt", "reviewed change\n")
-        result = d.prepare(self.git, branch="feat/fictional-delivery", base=self.base,
+        result = d.prepare(self.git, self.gh, branch="feat/fictional-delivery", base=self.base,
                            allowlist=allowlist or ["sample.txt"], message="feat: fictional reviewed change",
                            title="Fictional reviewed change", body="Only fictional reviewed content.",
                            evidence="Observed fictional fixture checks passed.", output=self.directory / output)
@@ -172,6 +195,219 @@ class DeliveryTests(unittest.TestCase):
     def snapshot(self):
         index = (self.root / ".git/index").read_bytes()
         return self.git.ref("HEAD"), hashlib.sha256(index).hexdigest(), self.git.run("status", "--porcelain=v1", "--untracked-files=all")
+
+    def test_verified_modern_and_legacy_noreply_can_differ_by_role(self):
+        self.gh.identity_pages[1] = [attributed_commit(committer_email=FAKE_LEGACY_NOREPLY)]
+        with mock.patch.dict(os.environ, {"GIT_COMMITTER_EMAIL": FAKE_LEGACY_NOREPLY}):
+            manifest, value = self.manifest()
+            self.assertEqual(manifest["author"]["email"], FAKE_NOREPLY)
+            self.assertEqual(manifest["committer"]["email"], FAKE_LEGACY_NOREPLY)
+            self.assertTrue(d.publish(self.git, self.gh, manifest, value)["dry_run"])
+        self.assertTrue(self.gh.identity_requests)
+        self.assertTrue(all(FAKE_NOREPLY not in request and FAKE_LEGACY_NOREPLY not in request
+                            for request in self.gh.identity_requests))
+
+    def test_public_evidence_can_be_on_separate_commits_for_each_role(self):
+        self.gh.identity_pages[1] = [attributed_commit(committer_email="unrelated@example.invalid"),
+                                     attributed_commit(author_email="unrelated@example.invalid",
+                                                       committer_email=FAKE_LEGACY_NOREPLY)]
+        with mock.patch.dict(os.environ, {"GIT_COMMITTER_EMAIL": FAKE_LEGACY_NOREPLY}):
+            self.manifest()
+
+    def test_private_author_is_blocked_before_review_artifacts_or_git_writes(self):
+        self.write("sample.txt", "reviewed change\n")
+        before = self.snapshot()
+        with mock.patch.dict(os.environ, {"GIT_AUTHOR_EMAIL": "private-person@example.invalid"}):
+            with self.assertRaises(d.Blocked) as blocked:
+                self.manifest()
+        self.assertNotIn("private-person@example.invalid", str(blocked.exception))
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse((self.directory / "review").exists())
+        self.assertEqual(self.gh.identity_requests, [])
+
+    def test_unicode_controls_in_effective_git_names_block_before_artifacts(self):
+        self.write("sample.txt", "reviewed change\n")
+        before = self.snapshot()
+        for role in ("AUTHOR", "COMMITTER"):
+            for codepoint in ("\u202e", "\u200b", "\u0085"):
+                with self.subTest(role=role, codepoint=ord(codepoint)):
+                    with mock.patch.dict(os.environ, {f"GIT_{role}_NAME": "Fictional" + codepoint + "Maintainer"}):
+                        with self.assertRaisesRegex(d.Blocked, "not a verified noreply") as blocked:
+                            self.manifest()
+                    self.assertNotIn(FAKE_NOREPLY, str(blocked.exception))
+                    self.assertEqual(self.snapshot(), before)
+                    self.assertFalse((self.directory / "review").exists())
+        self.assertEqual(self.gh.identity_requests, [])
+
+    def test_printable_international_git_name_is_accepted(self):
+        with mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "María Núñez 李",
+                                              "GIT_COMMITTER_NAME": "María Núñez 李"}):
+            manifest, value = self.manifest()
+            self.assertEqual(manifest["author"]["name"], "María Núñez 李")
+            self.assertEqual(manifest["committer"]["name"], "María Núñez 李")
+            self.assertTrue(d.publish(self.git, self.gh, manifest, value)["dry_run"])
+
+    def test_unicode_control_blocks_dry_run_and_execute_before_receipts_or_staging(self):
+        manifest, value = self.manifest()
+        before = self.snapshot()
+        with mock.patch.dict(os.environ, {"GIT_COMMITTER_NAME": "Fictional\u202eMaintainer"}):
+            for execute in (False, True):
+                with self.assertRaisesRegex(d.Blocked, "not a verified noreply") as blocked:
+                    d.publish(self.git, self.gh, manifest, value, execute=execute,
+                              approval=self.approval(value) if execute else None,
+                              directory=self.directory / "receipt" if execute else None)
+                self.assertNotIn(FAKE_NOREPLY, str(blocked.exception))
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse((self.directory / "receipt").exists())
+        self.assertEqual(self.git.text("ls-remote", "origin", "refs/heads/feat/fictional-delivery"), "")
+
+    def test_private_committer_blocks_dry_run_and_execute_before_receipts(self):
+        manifest, value = self.manifest()
+        before = self.snapshot()
+        remote_before = self.git.text("ls-remote", "origin", "refs/heads/feat/fictional-delivery")
+        with mock.patch.dict(os.environ, {"GIT_COMMITTER_EMAIL": "private-person@example.invalid"}):
+            for execute in (False, True):
+                with self.assertRaises(d.Blocked) as blocked:
+                    d.publish(self.git, self.gh, manifest, value, execute=execute,
+                              approval=self.approval(value) if execute else None,
+                              directory=self.directory / "receipt" if execute else None)
+                self.assertNotIn("private-person@example.invalid", str(blocked.exception))
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse((self.directory / "receipt").exists())
+        self.assertEqual(self.git.text("ls-remote", "origin", "refs/heads/feat/fictional-delivery"), remote_before)
+
+    def test_same_email_requires_separate_author_and_committer_attribution(self):
+        for missing_role in ("author", "committer"):
+            evidence = attributed_commit()
+            evidence[missing_role] = None
+            self.gh.identity_pages[1] = [evidence]
+            with self.assertRaisesRegex(d.Blocked, "Contradictory"):
+                self.manifest(output="review-" + missing_role)
+            self.assertFalse((self.directory / ("review-" + missing_role)).exists())
+
+    def test_contradictory_attribution_and_wrong_account_fail_closed(self):
+        evidence = attributed_commit(committer_id=FAKE_OWNER_ID + 1)
+        self.gh.identity_pages[1] = [evidence, attributed_commit()]
+        with self.assertRaisesRegex(d.Blocked, "Contradictory"):
+            self.manifest()
+        self.gh.identity_pages[1] = [attributed_commit()]
+        self.gh.account_data["id"] = FAKE_OWNER_ID + 1
+        with self.assertRaisesRegex(d.Blocked, "not the repository owner"):
+            self.manifest()
+
+    def test_syntactically_plausible_noreply_without_matching_public_evidence_fails(self):
+        self.gh.identity_pages[1] = [attributed_commit(author_email=FAKE_LEGACY_NOREPLY,
+                                                       committer_email=FAKE_LEGACY_NOREPLY)]
+        with self.assertRaisesRegex(d.Blocked, "both Git identities"):
+            self.manifest()
+        self.gh.identity_pages[1] = [attributed_commit()]
+        with mock.patch.dict(os.environ, {"GIT_AUTHOR_EMAIL": "987654321+mauritoharretche@users.noreply.github.com"}):
+            with self.assertRaisesRegex(d.Blocked, "not a verified noreply"):
+                self.manifest()
+
+    def test_public_evidence_search_has_three_page_300_commit_limit(self):
+        unrelated = attributed_commit(author_email="unrelated@example.invalid",
+                                      committer_email="unrelated@example.invalid")
+        self.gh.identity_pages = {page: [unrelated] * 100 for page in (1, 2, 3)}
+        with self.assertRaisesRegex(d.Blocked, "both Git identities"):
+            self.manifest()
+        self.assertEqual(len(self.gh.identity_requests), 3)
+        self.assertTrue(self.gh.identity_requests[-1].endswith("&page=3"))
+        self.assertFalse((self.directory / "review").exists())
+
+    def test_identity_observation_has_bounded_deadline_and_restores_client(self):
+        original_get = self.gh.get
+        observed = []
+
+        def bounded_get(path):
+            observed.append(self.gh.deadline - d.time.monotonic())
+            return original_get(path)
+
+        with mock.patch.object(self.gh, "get", side_effect=bounded_get):
+            self.manifest()
+        self.assertTrue(observed)
+        self.assertTrue(all(0 < remaining <= d.IDENTITY_SECONDS for remaining in observed))
+        self.assertIsNone(self.gh.deadline)
+
+    def test_valid_evidence_arriving_after_deadline_is_rejected(self):
+        self.write("sample.txt", "reviewed change\n")
+        before = self.snapshot()
+        original_get = self.gh.get
+
+        def late_evidence(path):
+            response = original_get(path)
+            if path.startswith(d.endpoint("/commits?sha=")):
+                self.gh.deadline = d.time.monotonic() - 1
+            return response
+
+        with mock.patch.object(self.gh, "get", side_effect=late_evidence):
+            with self.assertRaisesRegex(d.Blocked, "deadline exceeded") as blocked:
+                self.manifest()
+        self.assertNotIn(FAKE_NOREPLY, str(blocked.exception))
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse((self.directory / "review").exists())
+        self.assertIsNone(self.gh.deadline)
+
+    def test_malformed_or_inaccessible_account_and_commit_responses_fail_closed(self):
+        for account in ({"id": FAKE_OWNER_ID, "login": "mauritoharretche", "type": "Organization"},
+                        {"id": "123456789", "login": "mauritoharretche", "type": "User"}):
+            self.gh.account_data = account
+            with self.assertRaises(d.Blocked):
+                self.manifest()
+        self.gh.account_data = {"id": FAKE_OWNER_ID, "login": "mauritoharretche", "type": "User"}
+        for evidence in ([{"commit": {"author": {"email": FAKE_NOREPLY}}, "author": {"id": FAKE_OWNER_ID}}],
+                         [{"commit": {"author": {"email": FAKE_NOREPLY},
+                                      "committer": {"email": FAKE_NOREPLY}},
+                           "author": {"id": FAKE_OWNER_ID, "login": "mauritoharretche"},
+                           "committer": {"id": "invalid", "login": "mauritoharretche"}}]):
+            self.gh.identity_pages[1] = evidence
+            with self.assertRaisesRegex(d.Blocked, "evidence is invalid"):
+                self.manifest()
+        with mock.patch.object(self.gh, "authenticated_user", side_effect=d.Blocked("Account unavailable")):
+            with self.assertRaises(d.Blocked):
+                self.manifest()
+
+    def test_git_environment_overrides_config_then_changed_effective_identity_blocks(self):
+        self.git.run("config", "user.email", "private-person@example.invalid")
+        manifest, value = self.manifest()
+        self.assertEqual(manifest["author"]["email"], FAKE_NOREPLY)
+        with mock.patch.dict(os.environ, os.environ.copy()) as environment:
+            environment.pop("GIT_AUTHOR_EMAIL")
+            with self.assertRaises(d.Blocked) as blocked:
+                d.publish(self.git, self.gh, manifest, value)
+        self.assertNotIn("private-person@example.invalid", str(blocked.exception))
+        self.assertFalse((self.directory / "receipt").exists())
+
+    def test_identity_change_immediately_before_commit_stops_without_commit_or_push(self):
+        manifest, value = self.manifest()
+        original = self.git.identity
+        author_reads = 0
+
+        def changed_identity(variable):
+            nonlocal author_reads
+            result = original(variable)
+            if variable == "GIT_AUTHOR_IDENT":
+                author_reads += 1
+                if author_reads == 2:
+                    return {**result, "email": "private-person@example.invalid"}
+            return result
+
+        with mock.patch.object(self.git, "identity", side_effect=changed_identity):
+            with self.assertRaisesRegex(d.Blocked, "before commit") as blocked:
+                self.execute(manifest, value)
+        self.assertNotIn("private-person@example.invalid", str(blocked.exception))
+        self.assertEqual(self.git.ref("HEAD"), self.base)
+        self.assertFalse((self.directory / "receipt" / "committed.json").exists())
+        self.assertFalse((self.directory / "receipt" / "pushed.json").exists())
+        self.assertEqual(self.git.text("ls-remote", "origin", "refs/heads/feat/fictional-delivery"), "")
+        self.assertNotIn("private-person@example.invalid", (self.directory / "receipt" / "stopped.json").read_text())
+
+    def test_authenticated_user_uses_only_fixed_account_endpoint(self):
+        with mock.patch.object(d, "command", return_value=d.canonical(self.gh.account_data)) as invoked:
+            account = d.GitHub().authenticated_user()
+        self.assertEqual(account["id"], FAKE_OWNER_ID)
+        self.assertEqual(invoked.call_args.args[0],
+                         ["gh", "api", "--hostname", "github.com", "user", "--jq", "{id,login,type}"])
 
     def test_prepare_is_reproducible_and_never_writes_index_or_git_objects(self):
         self.write("sample.txt", "reviewed change\n")
