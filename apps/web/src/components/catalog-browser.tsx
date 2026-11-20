@@ -105,7 +105,7 @@ export function CatalogBrowser({ view }: { view: CatalogViewState }) {
     <div className="page-heading catalog-page-heading"><p className="eyebrow">Catálogo operativo</p><h1>Organizá tus productos</h1><p className="muted">Clasificación y estado administrativo. Activar no significa publicado, disponible ni vendible.</p></div>
     <div className="catalog-layout">
       <section className="panel catalog-products" aria-labelledby="catalog-products-title">
-        <div className="section-heading"><h2 id="catalog-products-title" tabIndex={-1}>Productos</h2>
+        <div className="section-heading"><div className="catalog-section-title"><h2 id="catalog-products-title" tabIndex={-1}>Productos</h2>{current && <p className="catalog-count">{current.products.length} en esta página</p>}</div>
           {capabilities.includes("catalog.create_product_with_initial_variant") && <Link className="entry-link button-primary" href="/operations">Nuevo producto</Link>}
         </div>
         <div className="catalog-toolbar">
