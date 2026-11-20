@@ -53,13 +53,17 @@ export function OperationsShell({ children }: { children: React.ReactNode }) {
       <a className="skip-link" href="#workspace">Ir al contenido</a>
       <header className="operator-header">
         <div className="operator-header-inner">
-          <Link className="brand" href="/operations/catalog" aria-label="MIRA · Ir al catálogo">MIRA<span>Operaciones</span></Link>
-          <nav aria-label="Navegación principal">
-            <Link href="/operations/catalog" aria-current={pathname === "/operations/catalog" ? "page" : pathname.startsWith("/operations/products/") ? "location" : undefined}>Catálogo</Link>
-            <Link href="/operations" aria-current={pathname === "/operations" ? "page" : undefined}>Nuevo producto</Link>
-          </nav>
-          <p className="demo-marker">Demo aislada · Datos ficticios</p>
-          <button className="button-quiet logout-button" onClick={() => void logout()} disabled={leaving}>Cerrar sesión</button>
+          <div className="operator-header-main">
+            <Link className="brand" href="/operations/catalog" aria-label="MIRA · Ir al catálogo">MIRA<span>Operaciones</span></Link>
+            <nav aria-label="Navegación principal">
+              <Link href="/operations/catalog" aria-current={pathname === "/operations/catalog" ? "page" : pathname.startsWith("/operations/products/") ? "location" : undefined}>Catálogo</Link>
+              <Link href="/operations" aria-current={pathname === "/operations" ? "page" : undefined}>Nuevo producto</Link>
+            </nav>
+          </div>
+          <div className="operator-header-actions">
+            <p className="demo-marker">Demo aislada · Datos ficticios</p>
+            <button className="button-quiet logout-button" onClick={() => void logout()} disabled={leaving}>Cerrar sesión</button>
+          </div>
         </div>
       </header>
       <main id="workspace" className="operator-page" tabIndex={-1}>{children}</main>

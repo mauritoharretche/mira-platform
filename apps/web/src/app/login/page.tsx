@@ -35,21 +35,28 @@ export default function LoginPage() {
   }
 
   return <main className="login-page">
-    <section className="login-card" aria-labelledby="login-title">
-      <div className="login-brand"><span className="login-wordmark">MIRA</span><span className="demo-marker">Demo aislada</span></div>
-      <p className="eyebrow">Acceso interno</p>
-      <h1 id="login-title">Tu espacio de operaciones</h1>
-      <p className="muted">Ingresá con tu cuenta habilitada para administrar productos y su recepción inicial.</p>
-      {notice && <p className="notice" role="status">{notice}</p>}
-      {error && <p className="error-box" role="alert" tabIndex={-1} ref={errorRef}>{error}</p>}
-      <form onSubmit={(event) => void submit(event)} aria-busy={pending}>
-        <label htmlFor="username">Usuario</label>
-        <input id="username" name="username" autoComplete="username" maxLength={150} required disabled={pending} />
-        <label htmlFor="password">Contraseña</label>
-        <input id="password" name="password" type="password" autoComplete="current-password" maxLength={1024} required disabled={pending} />
-        <button className="button-primary" disabled={pending}>{pending ? "Ingresando…" : "Iniciar sesión"}</button>
-      </form>
-      <p className="caption">Demostración local. El acceso no concede permisos de operación por sí solo.</p>
+    <section className="login-shell" aria-labelledby="login-title">
+      <div className="login-intro">
+        <div className="login-brand"><span className="login-wordmark">MIRA</span><span className="demo-marker">Demo aislada</span></div>
+        <div className="login-intro-copy"><p className="eyebrow">Espacio de trabajo</p><p className="login-intro-title">Cada dato, en su lugar.</p>
+          <p>Catálogo, presentaciones, precios, mediciones e inventario en una ficha operativa clara.</p></div>
+        <p className="login-intro-foot">Entorno local · Datos ficticios</p>
+      </div>
+      <div className="login-card">
+        <p className="eyebrow">Acceso interno</p>
+        <h1 id="login-title">Tu espacio de operaciones</h1>
+        <p className="muted">Ingresá con tu cuenta habilitada para administrar productos y su recepción inicial.</p>
+        {notice && <p className="notice" role="status">{notice}</p>}
+        {error && <p className="error-box" role="alert" tabIndex={-1} ref={errorRef}>{error}</p>}
+        <form onSubmit={(event) => void submit(event)} aria-busy={pending}>
+          <label htmlFor="username">Usuario</label>
+          <input id="username" name="username" autoComplete="username" maxLength={150} required disabled={pending} />
+          <label htmlFor="password">Contraseña</label>
+          <input id="password" name="password" type="password" autoComplete="current-password" maxLength={1024} required disabled={pending} />
+          <button className="button-primary" disabled={pending}>{pending ? "Ingresando…" : "Iniciar sesión"}</button>
+        </form>
+        <p className="caption">Demostración local. El acceso no concede permisos de operación por sí solo.</p>
+      </div>
     </section>
   </main>;
 }
