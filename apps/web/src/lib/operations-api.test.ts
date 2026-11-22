@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clearOperatorState, formatPriceARS, messageFor, normalizeMeasurementAmount, normalizePriceInput, OperationPermitCoordinator, OperatorError, request, signIn, validMeasurementSpec, validPositiveInteger } from "./operations-api";
+import { clearOperatorState, formatPriceARS, messageFor, normalizeMeasurementAmount, normalizePriceInput, OperationPermitCoordinator, OperatorError, request, signIn, validMeasurementSpec, validNonnegativeInteger, validPositiveInteger, validStock } from "./operations-api";
 
 afterEach(() => { clearOperatorState(); vi.unstubAllGlobals(); });
 
@@ -31,6 +31,36 @@ describe("operator transport", () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json({ error: { code: "stock_conflict" } }, { status: 409 }));
     await expect(request("/inventory/variants/example/initial-receipt", { method: "POST" }, fetcher)).rejects.toMatchObject({ code: "stock_conflict", uncertain: false });
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it("validates physical counts and adjustment snapshots without Number conversion", () => {
+    expect(validNonnegativeInteger("0")).toBe(true);
+    expect(validNonnegativeInteger("9007199254740993")).toBe(true);
+    expect(validNonnegativeInteger("9223372036854775807")).toBe(true);
+    for (const value of ["", "00", "01", "-1", "+1", "1.0", " 1", "9223372036854775808", "１"])
+      expect(validNonnegativeInteger(value)).toBe(false);
+    const variant = "00000000-0000-4000-8000-000000000001";
+    const stock = { position_id: "00000000-0000-4000-8000-000000000002", variant_id: variant,
+      unit: "EACH", on_hand: "9007199254740993", version: "2",
+      created_at: "2026-11-22T12:00:00+00:00", updated_at: "2026-11-22T12:00:00+00:00" };
+    expect(validStock(stock, variant)).toBe(true);
+    for (const invalid of [{ ...stock, variant_id: "different" }, { ...stock, on_hand: 1 },
+      { ...stock, version: "0" }, { ...stock, updated_at: "invalid" }])
+      expect(validStock(invalid, variant)).toBe(false);
+  });
+  it("keeps adjustment conflicts and lost writes explicit while sharing the stock permit", async () => {
+    const conflict = vi.fn().mockResolvedValue(Response.json({ error: { code: "stock_version_conflict" } }, { status: 409 }));
+    await expect(request("/inventory/variants/id/adjustments", { method: "POST" }, conflict))
+      .rejects.toMatchObject({ code: "stock_version_conflict", uncertain: false });
+    expect(conflict).toHaveBeenCalledTimes(1);
+    const lost = vi.fn().mockRejectedValue(new TypeError("fictional loss"));
+    await expect(request("/inventory/variants/id/adjustments", { method: "POST" }, lost))
+      .rejects.toMatchObject({ uncertain: true });
+    expect(lost).toHaveBeenCalledTimes(1);
+    const permits = new OperationPermitCoordinator();
+    const permit = permits.acquire("stock", "product");
+    expect(permits.acquire("stock", "product")).toBeNull();
+    expect(permits.acquire("price", "product")).toBeNull();
+    expect(permits.release(permit!)).toBe(true);
   });
 });
 

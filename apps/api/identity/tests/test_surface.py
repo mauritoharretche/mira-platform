@@ -32,6 +32,7 @@ class IdentitySurfaceTests(SimpleTestCase):
              "api/v1/operator/catalog/categories", "api/v1/operator/catalog/products/<str:product_id>/category",
              "api/v1/operator/catalog/products/<str:product_id>/active",
              "api/v1/operator/inventory/variants/<str:variant_id>/initial-receipt",
+             "api/v1/operator/inventory/variants/<str:variant_id>/adjustments",
              "api/v1/operator/inventory/variants/<str:variant_id>/stock",
              "api/v1/operator/inventory/variants/<str:variant_id>/movements"],
         )

@@ -29,6 +29,74 @@ class InventoryHTTPTests(TestCase):
         return self.client.post(self.path + "/initial-receipt", {"quantity": "10", "unit": "EACH", "expected_version": None} if payload is None else payload,
                                 content_type="application/json", secure=True, HTTP_X_CSRFTOKEN=self.token)
 
+    def adjustment(self, payload=None):
+        return self.client.post(self.path + "/adjustments", {"new_on_hand": "7", "expected_version": "1", "reason": "  Recuento ficticio  "} if payload is None else payload,
+                                content_type="application/json", secure=True, HTTP_X_CSRFTOKEN=self.token)
+
+    def grant_adjustment(self):
+        self.user.user_permissions.add(Permission.objects.get(content_type__app_label="inventory", codename="adjust_stock"))
+
+    def test_adjustment_requires_independent_permission_and_authorizes_before_validation(self):
+        self.assertEqual(self.adjustment().status_code, 403)
+        self.assertEqual(self.adjustment({"new_on_hand": "bad"}).status_code, 403)
+        self.grant_adjustment()
+        self.assertEqual(self.adjustment().json()["error"]["code"], "stock_not_initialized")
+        self.user.user_permissions.clear()
+        self.assertEqual(self.adjustment().status_code, 403)
+        self.path = PREFIX + "/inventory/variants/invalid"
+        self.assertEqual(self.adjustment({"new_on_hand": "bad"}).status_code, 403)
+
+    def test_adjustment_strict_inputs_and_missing_variant(self):
+        self.grant_adjustment()
+        self.receipt()
+        base = {"new_on_hand": "0", "expected_version": "1", "reason": "count"}
+        changes = [{"new_on_hand": value} for value in (True, 0, 1.5, "-1", "+1", "01", " 1", "1.0", "１", str(MAX_STOCK_INTEGER + 1))]
+        changes += [{"expected_version": value} for value in (None, True, 1, 1.5, "0", "01", "-1", " 1", str(MAX_STOCK_INTEGER + 1))]
+        changes += [{"reason": value} for value in ("", "  ", "x" * 256, 1)]
+        changes += [{"actor": "fictional"}, {"principal": 1}]
+        for change in changes:
+            with self.subTest(change=change):
+                self.assertEqual(self.adjustment(base | change).status_code, 400)
+        for key in base:
+            with self.subTest(missing=key):
+                self.assertEqual(self.adjustment({name: value for name, value in base.items() if name != key}).status_code, 400)
+        self.assertEqual((StockPosition.objects.get().on_hand, StockMovement.objects.count()), (10, 1))
+        self.path = PREFIX + "/inventory/variants/" + str(uuid4())
+        self.assertEqual(self.adjustment().status_code, 404)
+
+    def test_adjustment_zero_noop_conflict_and_exact_maximum(self):
+        self.grant_adjustment()
+        self.receipt()
+        zero = self.adjustment({"new_on_hand": "0", "expected_version": "1", "reason": " count "})
+        self.assertEqual(zero.status_code, 200)
+        self.assertEqual((zero.json()["stock"]["on_hand"], zero.json()["stock"]["version"]), ("0", "2"))
+        movement = StockMovement.objects.get(sequence=2)
+        self.assertEqual((movement.kind, movement.delta, movement.reason), ("ADJUSTMENT", -10, "count"))
+        self.assertEqual(InventoryMovementAuditEntry.objects.get(movement_id=movement.pk).actor_id, str(self.user.pk))
+        noop = self.adjustment({"new_on_hand": "0", "expected_version": "2", "reason": "no change"})
+        self.assertEqual((noop.status_code, noop.json()["stock"]["version"]), (200, "2"))
+        self.assertEqual((StockMovement.objects.count(), InventoryMovementAuditEntry.objects.count()), (2, 2))
+        stale = self.adjustment({"new_on_hand": "0", "expected_version": "1", "reason": "stale no-op"})
+        self.assertEqual((stale.status_code, stale.json()["error"]["code"]), (409, "stock_version_conflict"))
+        maximum = self.adjustment({"new_on_hand": str(MAX_STOCK_INTEGER), "expected_version": "2", "reason": "upper bound"})
+        self.assertEqual((maximum.status_code, maximum.json()["stock"]["on_hand"]), (200, str(MAX_STOCK_INTEGER)))
+
+    def test_adjustment_audit_failure_rolls_back_and_csrf_is_required(self):
+        self.grant_adjustment()
+        self.receipt()
+        self.assertEqual(self.client.post(self.path + "/adjustments", {}, content_type="application/json", secure=True).status_code, 403)
+        original = audit_application.record_inventory_movement
+        for after in (False, True):
+            def fail(**kwargs):
+                if after:
+                    original(**kwargs)
+                raise DatabaseError("fictional attribution failure")
+            with self.subTest(after=after), patch.object(audit_application, "record_inventory_movement", side_effect=fail):
+                response = self.adjustment()
+                self.assertEqual((response.status_code, response.json()), (503, {"error": {"code": "unavailable"}}))
+                self.assertEqual((StockPosition.objects.get().on_hand, StockMovement.objects.count(), InventoryMovementAuditEntry.objects.count()), (10, 1, 1))
+        self.assertEqual(self.client.get(self.path + "/adjustments", secure=True).status_code, 405)
+
     def test_absence_initial_receipt_history_attribution_and_conflict(self):
         self.assertEqual(self.client.get(self.path + "/stock", secure=True).json(), {"stock": None})
         self.assertEqual(self.client.get(self.path + "/movements", secure=True).json(), {"movements": [], "next_cursor": None})

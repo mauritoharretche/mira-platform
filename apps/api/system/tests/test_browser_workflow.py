@@ -584,6 +584,8 @@ class OperatorBrowserTests(LiveServerTestCase):
                     if scenario.startswith("catalog-"):
                         permissions = (*PERMISSIONS, "catalog.view_category", "catalog.add_category",
                                        "catalog.set_product_category", "catalog.set_product_active")
+                    if scenario in ("journey", "catalog-variants"):
+                        permissions = (*permissions, "inventory.adjust_stock")
                     if scenario in ("catalog-price", "catalog-price-lost"):
                         permissions = (*permissions, "catalog.set_variant_price", "catalog.view_variantpricerevision",
                                        "catalog.view_variant_price_history")
@@ -748,18 +750,27 @@ class OperatorBrowserTests(LiveServerTestCase):
         self.assertEqual(Variant.objects.count(), fixture_count + 20)
         self.assertEqual(CatalogAuditEntry.objects.count(), 16)
         self.assertEqual(StockPosition.objects.count(), 8)
-        self.assertEqual(StockMovement.objects.count(), 8)
-        self.assertEqual(InventoryMovementAuditEntry.objects.count(), 8)
+        self.assertEqual(StockMovement.objects.count(), 10)
+        self.assertEqual(InventoryMovementAuditEntry.objects.count(), 10)
         for variant in legacy_variants:
             audit = CatalogAuditEntry.objects.get(variant_id=variant.pk)
             owner = variant.sku.removeprefix("FICTIONAL-")
             self.assertEqual(audit.actor_id, str(accounts["fictional-" + owner]))
         for position in StockPosition.objects.all():
-            movement = StockMovement.objects.get(position=position)
-            audit = InventoryMovementAuditEntry.objects.get(movement_id=movement.pk)
-            self.assertEqual((position.on_hand, position.version, movement.sequence, movement.quantity_after), (12, 1, 1, 12))
-            self.assertEqual(audit.actor_id, CatalogAuditEntry.objects.get(variant_id=position.variant_id).actor_id)
-        print("BROWSER_PERSISTENCE_PASS: 10 creations, 8 positions/movements/audits; lost responses did not duplicate writes", flush=True)
+            movements = list(StockMovement.objects.filter(position=position).order_by("sequence"))
+            audits = [InventoryMovementAuditEntry.objects.get(movement_id=item.pk) for item in movements]
+            actor = CatalogAuditEntry.objects.get(variant_id=position.variant_id).actor_id if CatalogAuditEntry.objects.filter(variant_id=position.variant_id).exists() else None
+            if Variant.objects.get(pk=position.variant_id).sku.endswith("-journey"):
+                self.assertEqual((position.on_hand, position.version), (7, 2))
+                self.assertEqual([(item.kind, item.quantity_before, item.delta, item.quantity_after) for item in movements],
+                                 [("RECEIPT", 0, 12, 12), ("ADJUSTMENT", 12, -5, 7)])
+                self.assertEqual(movements[1].reason, "fictional physical count")
+            else:
+                self.assertEqual((position.on_hand, position.version), (12, 1))
+                self.assertEqual(len(movements), 1)
+            for movement, audit in zip(movements, audits):
+                self.assertEqual((audit.actor_id, audit.sequence, audit.quantity_after), (actor, movement.sequence, movement.quantity_after))
+        print("BROWSER_PERSISTENCE_PASS: 10 creations, 8 positions, 10 movements/audits; confirmed adjustments and lost responses reconciled", flush=True)
 
         self.assertEqual(Category.objects.count(), 8)
         self.assertEqual(CatalogChangeAuditEntry.objects.count(), 22)

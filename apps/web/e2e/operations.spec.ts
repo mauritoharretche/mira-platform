@@ -128,6 +128,25 @@ test("journey", async ({ page }, info) => {
   await expect(page.locator(".stock-count")).toHaveText("12 EACH");
   await page.reload();
   await expect(page.locator(".stock-count")).toHaveText("12 EACH");
+  let adjustments = 0;
+  page.on("request", (request) => { if (request.method() === "POST" && request.url().endsWith("/adjustments")) adjustments += 1; });
+  await page.getByLabel("Cantidad física contada (EACH)").fill("7");
+  await page.getByLabel("Motivo del ajuste").fill("fictional physical count");
+  await page.getByRole("button", { name: "Revisar ajuste" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Vas a registrar 7 EACH" })).toBeVisible();
+  await page.getByRole("button", { name: "Confirmar ajuste físico" }).click();
+  await expect(page.locator(".stock-count")).toHaveText("7 EACH");
+  await expect(page.getByRole("status").filter({ hasText: "Ajuste físico confirmado" })).toBeVisible();
+  await expect(page.getByRole("cell", { name: /^(Movimiento )?Ajuste$/ })).toBeVisible();
+  expect(adjustments).toBe(1);
+  await page.getByLabel("Cantidad física contada (EACH)").fill("7");
+  await page.getByLabel("Motivo del ajuste").fill("fictional same count");
+  await page.getByRole("button", { name: "Revisar ajuste" }).click();
+  await page.getByRole("button", { name: "Confirmar ajuste físico" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Recuento sin cambios" })).toBeVisible();
+  await expect(page.locator(".stock-count")).toHaveText("7 EACH");
+  await expect(page.getByRole("cell", { name: /^(Movimiento )?Ajuste$/ })).toHaveCount(1);
+  expect(adjustments).toBe(2);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: path.join(artifacts, `journey-${info.project.name}.png`), fullPage: true });
   if (info.project.name === "desktop") {

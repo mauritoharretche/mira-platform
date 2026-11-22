@@ -2,7 +2,7 @@ from django.urls import include, path
 
 from catalog.http import ProductVariantsView, CategoriesView, ProductActiveView, ProductCategoryView, ProductCreateView, ProductDetailView, VariantPriceView, VariantPriceHistoryView, VariantMeasurementSpecView
 from identity.http import OperatorLoginView, csrf_token, session_logout, session_status
-from inventory.http import InitialReceiptView, MovementsView, StockView
+from inventory.http import AdjustmentView, InitialReceiptView, MovementsView, StockView
 
 urlpatterns = [
     path("api/v1/", include("system.urls")),
@@ -20,6 +20,7 @@ urlpatterns = [
     path("api/v1/operator/catalog/products/<str:product_id>/category", ProductCategoryView.as_view(), name="operator-product-category"),
     path("api/v1/operator/catalog/products/<str:product_id>/active", ProductActiveView.as_view(), name="operator-product-active"),
     path("api/v1/operator/inventory/variants/<str:variant_id>/initial-receipt", InitialReceiptView.as_view(), name="operator-initial-receipt"),
+    path("api/v1/operator/inventory/variants/<str:variant_id>/adjustments", AdjustmentView.as_view(), name="operator-stock-adjustments"),
     path("api/v1/operator/inventory/variants/<str:variant_id>/stock", StockView.as_view(), name="operator-stock"),
     path("api/v1/operator/inventory/variants/<str:variant_id>/movements", MovementsView.as_view(), name="operator-movements"),
 ]

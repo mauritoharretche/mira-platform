@@ -271,3 +271,39 @@ switches in the mounted workspace. A conflict requires a fresh read and an
 explicit **Editar sobre esta versión** decision. A read never confirms an
 uncertain write, and no POST is retried automatically. The existing isolated
 `test_mira` runner remains the only authorized browser execution path.
+
+## INV-01: Physical stock adjustment by Variant
+
+Inventory continues to count whole `EACH` units. The operator workspace displays
+**existencia física**; it does not calculate reservations, sale availability,
+sellability, purchasing receipts or deductions for sales. Initial receipt and
+physical adjustment are distinct commands. This extension exposes the existing
+`adjust_stock` application command without changing ADR-019 or adding a model.
+
+`POST /inventory/variants/{id}/adjustments` requires the existing
+`inventory.adjust_stock` capability. The server checks it before parsing the
+Variant identifier or input. `/auth/session` advertises the capability only to
+authorized users; no permission is assigned automatically. The request has exactly
+`new_on_hand` (canonical nonnegative integer string), `expected_version`
+(canonical positive integer string) and `reason` (trimmed, nonempty, at most 255
+characters). The integer ceiling is 9223372036854775807. A successful response
+is 200 with the established stock snapshot. Invalid input is 400, missing Variant
+404, stale version `409 stock_version_conflict`, and an existing Variant without
+an initial position `409 stock_not_initialized`. The first-receipt route and its
+errors are unchanged.
+
+The application locks the position and writes balance, movement and Audit in one
+transaction. A matching no-op changes none of them and the panel reports that no
+new movement was created. The panel presents a separate
+review step before confirmation. The adjustment draft, expected version, conflict
+and uncertain result belong to the selected Variant in ProductWorkspace, separate
+from receipt outcomes. A 409 preserves the draft; reading alone never replaces
+the expected version. Only **Editar sobre esta versión** permits a new submission.
+After an uncertain response, reads can inform the operator but cannot attribute
+the prior write. Starting a new adjustment requires an explicit decision after
+reviewing saldo and movements, and starts with empty fields. No POST is retried.
+
+Movement pagination still bounds only the HTTP response, not the underlying
+database query. This remains a scalability limit for high-volume operational use.
+The operator surface remains disabled by default; browser verification uses only
+the native runner with `current_database() = test_mira`.

@@ -17,6 +17,8 @@ export type PendingPriceConflict = { draft: string; baseRevision: string | null 
 export type MeasurementDraft = { saleUnit: "" | "EACH" | "G" | "KG"; amount: string;
   netUnit: "" | "G" | "KG"; baseVersion: string | null };
 export type PendingMeasurementConflict = { draft: MeasurementDraft };
+export type StockAdjustmentState = { quantity: string; reason: string; expectedVersion: string | null;
+  outcome: "conflict" | "uncertain" | "confirmed" | "noop" | null; priorUncertain: boolean };
 
 export function ProductWorkspace({ productId, returnHref }: { productId: string; returnHref: string }) {
   const session = useOperator();
@@ -27,6 +29,7 @@ export function ProductWorkspace({ productId, returnHref }: { productId: string;
   const [locked, setLocked] = useState(false);
   const permits = useRef(new OperationPermitCoordinator());
   const [stockOutcomes, setStockOutcomes] = useState<Record<string, "confirmed" | "uncertain" | "conflict">>({});
+  const [stockAdjustments, setStockAdjustments] = useState<Record<string, StockAdjustmentState>>({});
   const [priceUncertain, setPriceUncertain] = useState<Record<string, boolean>>({});
   const [priceConflicts, setPriceConflicts] = useState<Record<string, PendingPriceConflict>>({});
   const [measurementDrafts, setMeasurementDrafts] = useState<Record<string, MeasurementDraft>>({});
@@ -96,6 +99,8 @@ export function ProductWorkspace({ productId, returnHref }: { productId: string;
           <p key={`measurement-warning:${id}`} role="status" className="notice">La medición de {current.variants.find((item) => item.id === id)?.sku ?? "otra variante"} requiere revisión. Cambiar de variante no confirma ni reenvía esa escritura.</p>)}
         {Object.entries(stockOutcomes).filter(([id, outcome]) => id !== variantId && outcome !== "confirmed").map(([id, outcome]) =>
           <p key={`stock-warning:${id}`} role="status" className="notice">Una recepción de {current.variants.find((item) => item.id === id)?.sku ?? "otra variante"} {outcome === "conflict" ? "tiene un conflicto y" : "tiene un resultado incierto y"} requiere revisión. Cambiar de selección no confirma ni reenvía esa escritura.</p>)}
+        {Object.entries(stockAdjustments).filter(([id, state]) => id !== variantId && (state.outcome === "conflict" || state.outcome === "uncertain" || state.priorUncertain)).map(([id, state]) =>
+          <p key={`adjustment-warning:${id}`} role="status" className="notice">Un ajuste físico de {current.variants.find((item) => item.id === id)?.sku ?? "otra variante"} {state.outcome === "conflict" ? "tiene un conflicto pendiente" : "tiene un resultado incierto pendiente de conciliación"}. Cambiar de selección no confirma ni reenvía esa escritura.</p>)}
       </section>
       {!variantId && <p role="status" className="panel empty-state">No hay una variante disponible para consultar precio, medición o inventario.</p>}
       {variantId && <>
@@ -121,7 +126,9 @@ export function ProductWorkspace({ productId, returnHref }: { productId: string;
         acquire={acquire} release={release} />
       <StockPanel key={`stock:${productId}:${variantId}`} product={current} variantId={variantId} locked={locked}
         outcome={stockOutcomes[variantId] ?? null} acquire={acquire} release={release}
-        onOutcome={(kind) => setStockOutcomes((previous) => ({ ...previous, [variantId]: kind }))} />
+        onOutcome={(kind) => setStockOutcomes((previous) => ({ ...previous, [variantId]: kind }))}
+        adjustment={stockAdjustments[variantId] ?? { quantity: "", reason: "", expectedVersion: null, outcome: null, priorUncertain: false }}
+        onAdjustment={(next) => setStockAdjustments((previous) => ({ ...previous, [variantId]: next }))} />
       </>}
     </>}
   </div>;

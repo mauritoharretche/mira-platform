@@ -9,7 +9,8 @@ from identity.contracts import Capability
 from system.http import OperatorAPIView, StrictSerializer, StrictTextField, error_response
 
 from . import application
-from .contracts import MAX_STOCK_INTEGER, InventoryUnit, InventoryValidationError, InventoryVariantNotFoundError, StockConflictError
+from .contracts import (MAX_STOCK_INTEGER, InventoryUnit, InventoryValidationError,
+                        InventoryVariantNotFoundError, StockConflictError, StockNotInitializedError)
 
 
 class ReceiptInput(StrictSerializer):
@@ -31,6 +32,27 @@ class ReceiptInput(StrictSerializer):
         if value is not None:
             raise serializers.ValidationError("An initial receipt must explicitly expect no prior version.")
         return None
+
+
+class AdjustmentInput(StrictSerializer):
+    new_on_hand = StrictTextField(max_length=19, trim_whitespace=False)
+    expected_version = StrictTextField(max_length=19, trim_whitespace=False)
+    reason = StrictTextField(max_length=255, trim_whitespace=True)
+
+    def validate_new_on_hand(self, value):
+        if not value.isascii() or not value.isdecimal() or (len(value) > 1 and value.startswith("0")) or int(value) > MAX_STOCK_INTEGER:
+            raise serializers.ValidationError("Use a canonical nonnegative integer within technical bounds.")
+        return int(value)
+
+    def validate_expected_version(self, value):
+        if not value.isascii() or not value.isdecimal() or value.startswith("0") or not 1 <= int(value) <= MAX_STOCK_INTEGER:
+            raise serializers.ValidationError("Use a canonical positive version within technical bounds.")
+        return int(value)
+
+    def validate_reason(self, value):
+        if not value:
+            raise serializers.ValidationError("An adjustment reason is required.")
+        return value
 
 
 def _variant_id(value):
@@ -65,6 +87,27 @@ class InitialReceiptView(OperatorAPIView):
         except InventoryValidationError:
             return error_response("validation_error", 400)
         return Response({"stock": _stock_payload(stock)}, status=201)
+
+
+class AdjustmentView(OperatorAPIView):
+    http_method_names = ["post", "options"]
+
+    def post(self, request, variant_id):
+        require_capability(principal=request.user, capability=Capability.ADJUST_STOCK)
+        identifier = _variant_id(variant_id)
+        serializer = AdjustmentInput(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            stock = application.adjust_stock(principal=request.user, variant_id=identifier, **serializer.validated_data)
+        except InventoryVariantNotFoundError:
+            return error_response("not_found", 404)
+        except StockNotInitializedError:
+            return error_response("stock_not_initialized", 409)
+        except StockConflictError:
+            return error_response("stock_version_conflict", 409)
+        except InventoryValidationError:
+            return error_response("validation_error", 400)
+        return Response({"stock": _stock_payload(stock)}, status=200)
 
 
 class StockView(OperatorAPIView):

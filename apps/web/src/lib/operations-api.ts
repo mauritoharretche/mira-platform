@@ -116,6 +116,20 @@ export function validPositiveInteger(value: string) {
   return /^[1-9][0-9]{0,18}$/.test(value) && (value.length < MAX_INTEGER.length || value <= MAX_INTEGER);
 }
 
+export function validNonnegativeInteger(value: string) {
+  return value === "0" || validPositiveInteger(value);
+}
+
+export function validStock(value: unknown, variantId: string): value is Stock {
+  if (!value || typeof value !== "object") return false;
+  const stock = value as Partial<Stock>;
+  return typeof stock.position_id === "string" && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(stock.position_id)
+    && stock.variant_id === variantId && stock.unit === "EACH"
+    && typeof stock.on_hand === "string" && validNonnegativeInteger(stock.on_hand)
+    && typeof stock.version === "string" && validPositiveInteger(stock.version)
+    && validMeasurementTimestamp(stock.created_at) && validMeasurementTimestamp(stock.updated_at);
+}
+
 export function messageFor(error: unknown): string {
   if (!(error instanceof OperatorError)) return "No pudimos completar la consulta. Intentá nuevamente.";
   if (error.uncertain) return "Resultado incierto: la operación pudo haberse guardado. No vuelvas a enviarla sin verificar.";
@@ -128,6 +142,8 @@ export function messageFor(error: unknown): string {
     identifier_conflict: "El SKU o código de barras ya está registrado. La creación no se realizó.",
     category_conflict: "Ya existe una categoría con ese nombre. Consultá las categorías antes de continuar.",
     stock_conflict: "El stock ya fue inicializado. Consultá el saldo y los movimientos antes de continuar.",
+    stock_version_conflict: "La versión del stock cambió. Conservamos tu borrador; consultá el saldo y decidí si querés editar sobre la versión vigente.",
+    stock_not_initialized: "Esta variante aún no tiene una recepción inicial. Consultá el saldo antes de ajustar.",
     price_conflict: "La revisión de precio cambió. Consultá el precio vigente antes de decidir una nueva edición.",
     measurement_conflict: "La versión de medición cambió. Consultá la declaración vigente antes de decidir una nueva edición.",
     not_found: "No encontramos el registro solicitado o el entorno operativo no está habilitado.",
