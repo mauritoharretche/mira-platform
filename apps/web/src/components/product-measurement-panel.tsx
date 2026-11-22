@@ -116,14 +116,16 @@ export function ProductMeasurementPanel({ variantId, locked, savedDraft, pending
     <div className="section-heading"><div><p className="eyebrow">Presentación comercial</p><h2 id="measurement-title">Medición de la variante</h2></div></div>
     <p className="muted">Declaración administrativa. No convierte unidades, cambia el precio ni modifica el stock EACH.</p>
     {!canRead ? <p>Sin permiso para consultar mediciones. La edición web requiere lectura para conocer la versión vigente.</p> : <>
+      {readError && <p role="alert" className="notice">{readError}</p>}
+      {uncertain && <p role="status" className="notice">Resultado incierto para esta variante. Consultar la declaración no confirma quién realizó la escritura. No la reenvíes desde este panel.</p>}
+      <div className="workspace-operation-grid"><div className="workspace-record-block"><p className="workspace-block-label">Registrado</p>
       {current === undefined ? !readError && <p role="status">Consultando medición…</p> : current === null ?
         <p className="empty-state">Sin especificación declarada</p> : <>
           <p className="presentation-meta">Unidad comercial: <strong>{current.sale_unit ?? "Desconocida"}</strong>. Contenido neto: <strong>{current.net_content_amount === null ? "Desconocido" : `${current.net_content_amount} ${current.net_content_unit}`}</strong>.</p>
           <p className="caption">Versión {current.version}{current.sale_unit === null && current.net_content_amount === null ? " · Declaración existente con campos desconocidos" : ""}</p>
         </>}
-      {readError && <p role="alert" className="notice">{readError}</p>}
       <button type="button" className="button-quiet" disabled={busy || locked} onClick={() => void refresh()}>Consultar medición vigente</button>
-      {uncertain && <p role="status" className="notice">Resultado incierto para esta variante. Consultar la declaración no confirma quién realizó la escritura. No la reenvíes desde este panel.</p>}
+      </div><div className="workspace-edit-block"><p className="workspace-block-label">En edición</p>
       {(conflict || needsReview) && <div className="notice" role="status"><p>La versión vigente cambió. Tu borrador se conserva. Consultá la declaración actual y decidí si querés editar sobre esta versión.</p>
         {reviewed && <button type="button" disabled={locked || uncertain} onClick={() => {
           const next = { ...draft, baseVersion: current?.version ?? null };
@@ -149,6 +151,7 @@ export function ProductMeasurementPanel({ variantId, locked, savedDraft, pending
           <button className="button-primary" type="submit">{busy ? "Guardando medición…" : "Guardar medición"}</button>
         </fieldset>
       </form>}
+      </div></div>
     </>}
   </section>;
 }

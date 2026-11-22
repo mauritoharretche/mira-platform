@@ -84,14 +84,16 @@ export function ProductClassificationPanel({ product, locked, acquire, release, 
   const currentCategory = categories.find((item) => item.id === product.category_id);
   return <section className="panel classification-panel" aria-labelledby="classification-title">
     <div className="section-heading"><div><p className="eyebrow">Organización comercial</p><h2 id="classification-title">Clasificación y estado</h2></div><span className={`badge ${product.is_active ? "badge-active" : "badge-inactive"}`}>{product.is_active ? "Activo administrativamente" : "Inactivo administrativamente"}</span></div>
-    <p className="saved-category">Categoría guardada: <strong>{product.category_id ? currentCategory?.name ?? "Categoría asignada" : "Sin categoría"}</strong></p>
-    {product.category_id && !currentCategory && <details className="technical-details"><summary>Identificador de categoría</summary><p className="identifier">{product.category_id}</p></details>}
+    <div className="workspace-record-block"><p className="workspace-block-label">Registrado</p>
+      <p className="saved-category">Categoría guardada: <strong>{product.category_id ? currentCategory?.name ?? "Categoría asignada" : "Sin categoría"}</strong></p>
+      {product.category_id && !currentCategory && <details className="technical-details"><summary>Identificador de categoría</summary><p className="identifier">{product.category_id}</p></details>}
+    </div>
     {error && <p role="alert" tabIndex={-1} ref={errorRef} className="error-box">{error}</p>}
     {notice && <p role="status" className="success-box">{notice}</p>}
     {busy && <p aria-live="polite">Guardando cambio administrativo…</p>}
     {uncertain && <p className="notice" role="status">Resultado incierto. Usá «Actualizar detalle» para consultar el estado; no reenvíes la escritura. La consulta no confirma quién realizó un cambio.</p>}
     <div className="workspace-grid classification-grid">
-      <div>{!canAssign ? <p>Sin permiso para cambiar la categoría.</p> : !canList ? <p>Necesitás permiso de consulta de categorías para elegir una en esta pantalla.</p> : <form onSubmit={assign} aria-busy={busy}>
+      <div className="workspace-edit-block"><p className="workspace-block-label">En edición</p>{!canAssign ? <p>Sin permiso para cambiar la categoría.</p> : !canList ? <p>Necesitás permiso de consulta de categorías para elegir una en esta pantalla.</p> : <form onSubmit={assign} aria-busy={busy}>
         <label htmlFor="product-category">Categoría del producto</label><select id="product-category" value={selected} onChange={(event) => { setSelected(event.target.value); if (event.target.value === (product.category_id ?? "")) setServerChanged(false); }} disabled={busy || locked || uncertain}>
           <option value="" disabled={product.is_active}>Sin categoría</option>
           {selected && !categories.some((item) => item.id === selected) && <option value={selected}>Categoría actual — cargá más categorías para ver su nombre</option>}
@@ -105,7 +107,7 @@ export function ProductClassificationPanel({ product, locked, acquire, release, 
         <button className="button-primary" disabled={busy || locked || uncertain || loading || serverChanged || (product.is_active && !selected)}>Guardar categoría</button></div>
         {product.is_active && <p className="caption">Desactivá el producto antes de quitar su categoría.</p>}
       </form>}</div>
-      <div><h3>Activación administrativa</h3><p className="muted">Requiere categoría guardada. No cambia precio ni medición.</p>
+      <div className="workspace-edit-block"><h3>Activación administrativa</h3><p className="muted">Requiere categoría guardada. No cambia precio ni medición.</p>
         {!canActivate ? <p>Sin permiso para cambiar el estado administrativo.</p> : <button disabled={busy || locked || uncertain || (!product.is_active && product.category_id === null)} onClick={() => void mutate("active", { is_active: !product.is_active })}>{product.is_active ? "Desactivar producto" : "Activar producto"}</button>}
         {!product.is_active && !product.category_id && <p className="caption">Asigná una categoría antes de activar.</p>}
       </div>

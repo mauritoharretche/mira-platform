@@ -161,13 +161,15 @@ export function ProductPricePanel({ variantId, locked, uncertain, onUncertain, p
     <div className="section-heading"><div><p className="eyebrow">Valor administrativo</p><h2 id="price-title">Precio de la variante</h2></div></div>
     <p className="muted">ARS por variante (PER_VARIANT). No expresa precio por peso, impuestos ni disponibilidad para vender.</p>
     {!canRead ? <p>Sin permiso para consultar precios.</p> : <>
+      {readError && <p role="alert" className="notice">{readError}</p>}
+      {uncertain && <p role="status" className="notice">Resultado incierto para esta variante. La consulta permite revisar el estado, pero no confirma quién realizó la escritura. No reenvíes el precio desde este panel.</p>}
+      <div className="workspace-operation-grid"><div className="workspace-record-block"><p className="workspace-block-label">Registrado</p>
       {current === undefined ? !readError && <p role="status">Consultando precio…</p> : current === null ? <p className="empty-state">Sin precio asignado</p> : <>
         <p className="stock-count">{formatPriceARS(current.amount)}</p>
         <p className="caption">Revisión {current.sequence}. Registrada: {new Intl.DateTimeFormat("es-AR", { dateStyle: "short", timeStyle: "short", timeZone: "UTC" }).format(new Date(current.recorded_at))} UTC.</p>
       </>}
-      {readError && <p role="alert" className="notice">{readError}</p>}
       <button type="button" className="button-quiet" disabled={busy || locked} onClick={() => void refresh()}>Consultar precio vigente</button>
-      {uncertain && <p role="status" className="notice">Resultado incierto para esta variante. La consulta permite revisar el estado, pero no confirma quién realizó la escritura. No reenvíes el precio desde este panel.</p>}
+      </div><div className="workspace-edit-block"><p className="workspace-block-label">En edición</p>
       {(conflict || needsReview) && <div className="notice" role="status"><p>La revisión vigente cambió. Tu importe escrito se conserva. Consultá el precio actual y decidí si querés editar sobre esa revisión.</p>
         {reviewed && <button type="button" disabled={locked || uncertain} onClick={() => { setBaseRevision(current?.revision_id ?? null); setConflict(false); setReviewed(false); setWriteError(""); onConflictResolved(); }}>Editar sobre esta revisión</button>}
       </div>}
@@ -182,6 +184,7 @@ export function ProductPricePanel({ variantId, locked, uncertain, onUncertain, p
           <button className="button-primary" type="submit">{busy ? "Guardando precio…" : "Guardar precio"}</button>
         </fieldset>
       </form>}
+      </div></div>
     </>}
     <div className="price-history"><h3>Historial de revisiones</h3>
       {!canHistory ? <p>Sin permiso para consultar revisiones anteriores.</p> : <>

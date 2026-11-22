@@ -265,3 +265,42 @@ th { font-size: .75rem; color: var(--muted); background: var(--surface-inset); }
 .variant-panel legend { font-weight: 700; margin-bottom: .75rem; }
 .variant-panel input, .variant-panel select { max-width: 100%; }
 .variant-panel button { margin-top: 1rem; }
+
+/* UX-04B: product identity followed by recorded values and local edits in DOM order. */
+.product-workspace { display: grid; gap: 1rem; min-width: 0; }
+.product-workspace > .back-to-catalog,
+.product-workspace > .page-heading,
+.product-workspace > .technical-details { margin-bottom: 0; }
+.product-workspace > .technical-details { margin-top: -.75rem; }
+.product-workspace > .panel { margin-top: 0; margin-bottom: 0; }
+.product-workspace > .variant-attention:empty { display: none; }
+.variant-attention { display: grid; gap: .75rem; }
+.variant-attention .notice { margin: 0; }
+.workspace-operation-grid { display: grid; gap: 1rem; align-items: start; }
+.workspace-record-block, .workspace-edit-block { min-width: 0; padding: 1rem; border-radius: .5rem; overflow-wrap: anywhere; }
+.workspace-record-block { background: var(--surface-inset); border: 1px solid var(--border); }
+.workspace-edit-block { background: var(--surface); border: 1px solid var(--border); }
+.workspace-block-label { margin: 0 0 .75rem; color: var(--ink-secondary); font-size: .75rem; font-weight: 700; letter-spacing: .04em; }
+.workspace-record-block > :last-child, .workspace-edit-block > :last-child { margin-bottom: 0; }
+.classification-panel > .workspace-record-block { margin-bottom: 1rem; }
+.classification-grid { gap: 1rem; }
+.classification-grid > .workspace-edit-block:last-child { border: 1px solid var(--border); padding: 1rem; }
+.variant-panel > .workspace-record-block { margin-bottom: 1rem; }
+.variant-panel .workspace-record-block label { display: block; margin-bottom: .375rem; }
+.selected-variant-identity { display: grid; gap: .125rem; min-width: 0; margin: .5rem 0 0; color: var(--ink-secondary); font-size: .875rem; }
+.selected-variant-identity > * { min-width: 0; overflow-wrap: anywhere; }
+.variant-panel .workspace-record-block .muted { margin: .75rem 0 0; }
+.variant-panel .workspace-edit-block fieldset { margin-top: 0; }
+.price-panel .workspace-operation-grid, .measurement-panel .workspace-operation-grid { margin-top: 1rem; }
+.price-panel .workspace-record-block .stock-count { margin-bottom: .5rem; }
+.price-panel .workspace-record-block .button-quiet, .measurement-panel .workspace-record-block .button-quiet { margin-top: .75rem; }
+.price-history { margin-top: 1.25rem; border-top: 1px solid var(--border); padding-top: 1.25rem; }
+.product-workspace .identity-panel { margin-bottom: 0; }
+.product-workspace .stock-grid .panel:first-child { background: var(--surface-inset); }
+@media (min-width: 64rem) {
+  .workspace-operation-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 47.999rem) {
+  .workspace-record-block, .workspace-edit-block { padding: .875rem; }
+  .product-workspace .classification-grid > .workspace-edit-block:last-child { border: 1px solid var(--border); padding: .875rem; }
+}
