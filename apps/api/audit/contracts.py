@@ -23,3 +23,12 @@ class CatalogMeasurementAuditAction(Enum):
 class InventoryMovementAuditAction(Enum):
     STOCK_RECEIVED = "inventory.stock_received"
     STOCK_ADJUSTED = "inventory.stock_adjusted"
+
+
+class ProcurementAuditAction(Enum):
+    SUPPLIER_CREATED = "procurement.supplier_created"
+    SUPPLIER_UPDATED = "procurement.supplier_updated"
+    ORDER_CREATED = "procurement.order_created"
+    ORDER_UPDATED = "procurement.order_updated"
+    ORDER_CONFIRMED = "procurement.order_confirmed"
+    ORDER_RECEIVED = "procurement.order_received"

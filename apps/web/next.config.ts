@@ -6,10 +6,15 @@ const endpoints = [
   "catalog/products", "catalog/products/:productId", "catalog/products/:productId/variants",
   "catalog/variants/:variantId/price", "catalog/variants/:variantId/price/revisions",
   "catalog/variants/:variantId/measurement-spec",
+  "catalog/variants/search",
   "catalog/categories", "catalog/products/:productId/category", "catalog/products/:productId/active",
   "inventory/variants/:variantId/initial-receipt",
   "inventory/variants/:variantId/adjustments",
   "inventory/variants/:variantId/stock", "inventory/variants/:variantId/movements",
+  "procurement/suppliers", "procurement/suppliers/:supplierId",
+  "procurement/orders", "procurement/orders/:orderId",
+  "procurement/orders/:orderId/confirm", "procurement/orders/:orderId/receipts",
+  "procurement/receipts/operations/:operationId",
 ];
 
 const nextConfig: NextConfig = {

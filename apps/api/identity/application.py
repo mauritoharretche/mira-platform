@@ -24,6 +24,13 @@ _REQUIRED_PERMISSIONS = {
     Capability.ADJUST_STOCK: ("inventory.adjust_stock",),
     Capability.READ_STOCK: ("inventory.view_stockposition",),
     Capability.READ_STOCK_MOVEMENTS: ("inventory.view_stockmovement",),
+    Capability.READ_SUPPLIER: ("procurement.view_supplier",),
+    Capability.MANAGE_SUPPLIER: ("procurement.manage_supplier",),
+    Capability.READ_PURCHASE_ORDER: ("procurement.view_purchaseorder",),
+    Capability.CREATE_PURCHASE_ORDER: ("procurement.create_purchase_order",),
+    Capability.EDIT_PURCHASE_ORDER: ("procurement.edit_purchase_order",),
+    Capability.CONFIRM_PURCHASE_ORDER: ("procurement.confirm_purchase_order",),
+    Capability.RECEIVE_PURCHASE_ORDER: ("procurement.receive_purchase_order", "inventory.receive_stock"),
 }
 
 

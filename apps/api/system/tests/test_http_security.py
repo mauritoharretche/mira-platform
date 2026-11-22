@@ -95,7 +95,10 @@ paths = ["auth/csrf", "auth/login", "auth/session", "auth/logout", "catalog/prod
          "inventory/variants/invalid/initial-receipt", "inventory/variants/invalid/adjustments", "inventory/variants/invalid/stock", "inventory/variants/invalid/movements",
          "catalog/categories", "catalog/products/invalid/category", "catalog/products/invalid/active", "catalog/products/invalid/variants",
          "catalog/variants/invalid/price", "catalog/variants/invalid/price/revisions",
-         "catalog/variants/invalid/measurement-spec"]
+         "catalog/variants/invalid/measurement-spec", "catalog/variants/search",
+         "procurement/suppliers", "procurement/suppliers/invalid",
+         "procurement/orders", "procurement/orders/invalid", "procurement/orders/invalid/confirm",
+         "procurement/orders/invalid/receipts", "procurement/receipts/operations/invalid"]
 client = Client(enforce_csrf_checks=True, HTTP_HOST="localhost", HTTP_ORIGIN="http://localhost:3000")
 client.cookies[settings.SESSION_COOKIE_NAME] = "fictional-existing-session"
 with ExitStack() as stack:
@@ -107,7 +110,10 @@ with ExitStack() as stack:
                "catalog.application.create_category", "catalog.application.set_product_category", "catalog.application.set_product_active",
                "catalog.application.add_variant_to_product", "catalog.application.get_current_variant_price",
                "catalog.application.set_variant_price", "catalog.application.list_variant_price_history_page",
-               "catalog.application.get_variant_measurement_spec", "catalog.application.set_variant_measurement_spec"]]
+               "catalog.application.get_variant_measurement_spec", "catalog.application.set_variant_measurement_spec",
+               "catalog.references.search_variant_references", "procurement.application.create_supplier",
+               "procurement.application.update_supplier", "procurement.application.create_order",
+               "procurement.application.receive_order"]]
     connect = stack.enter_context(patch.object(BaseDatabaseWrapper, "ensure_connection", side_effect=AssertionError("Unsafe connection forbidden")))
     for path in paths:
         for method in ("get", "post"):
@@ -124,7 +130,7 @@ print(json.dumps({"rejected_requests": len(paths) * 2, "connections_opened": 0, 
         process = subprocess.run([sys.executable, "-B", "-c", worker], cwd=settings.BASE_DIR, env=env,
                                  capture_output=True, text=True, timeout=20)
         self.assertEqual(process.returncode, 0, "Independent-process isolation regression failed")
-        self.assertEqual(json.loads(process.stdout), {"rejected_requests": 34, "connections_opened": 0, "session_auth_business_calls": 0})
+        self.assertEqual(json.loads(process.stdout), {"rejected_requests": 50, "connections_opened": 0, "session_auth_business_calls": 0})
 
     def test_operator_is_disabled_in_base_and_all_endpoints_fail_closed_when_disabled(self):
         fake = {"DJANGO_SECRET_KEY": "fictional-settings-check", "POSTGRES_DB": "mira", "POSTGRES_USER": "fictional", "POSTGRES_PASSWORD": "fictional-settings-check"}
@@ -138,7 +144,10 @@ print(json.dumps({"rejected_requests": len(paths) * 2, "connections_opened": 0, 
                          "inventory/variants/invalid/stock", "inventory/variants/invalid/movements", "inventory/variants/invalid/initial-receipt", "inventory/variants/invalid/adjustments",
                          "catalog/categories", "catalog/products/invalid/category", "catalog/products/invalid/active", "catalog/products/invalid/variants",
                          "catalog/variants/invalid/price", "catalog/variants/invalid/price/revisions",
-                         "catalog/variants/invalid/measurement-spec"):
+                         "catalog/variants/invalid/measurement-spec", "catalog/variants/search",
+                         "procurement/suppliers", "procurement/suppliers/invalid",
+                         "procurement/orders", "procurement/orders/invalid", "procurement/orders/invalid/confirm",
+                         "procurement/orders/invalid/receipts", "procurement/receipts/operations/invalid"):
                 with self.subTest(path=path), self.assertNumQueries(0):
                     response = self.client.get(PREFIX + "/" + path, secure=True)
                     self.assertEqual(response.status_code, 404)

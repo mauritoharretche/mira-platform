@@ -6,10 +6,34 @@ from django.db.transaction import TransactionManagementError
 
 from identity.contracts import ActorContext
 
-from .contracts import CatalogAuditAction, CatalogChangeAuditAction, CatalogMeasurementAuditAction, CatalogPriceAuditAction
-from .models import CatalogAuditEntry, CatalogChangeAuditEntry, CatalogMeasurementAuditEntry, CatalogPriceAuditEntry
-from .contracts import InventoryMovementAuditAction
-from .models import InventoryMovementAuditEntry
+from .contracts import (CatalogAuditAction, CatalogChangeAuditAction, CatalogMeasurementAuditAction,
+                        CatalogPriceAuditAction, InventoryMovementAuditAction, ProcurementAuditAction)
+from .models import (CatalogAuditEntry, CatalogChangeAuditEntry, CatalogMeasurementAuditEntry,
+                     CatalogPriceAuditEntry, InventoryMovementAuditEntry, ProcurementAuditEntry)
+
+
+def record_procurement_event(*, actor: ActorContext, action: ProcurementAuditAction,
+                             event_id: UUID, supplier_id: UUID | None,
+                             order_id: UUID | None, receipt_id: UUID | None,
+                             version: int) -> UUID:
+    """Attribute a Procurement event in its caller-owned default transaction."""
+    if not transaction.get_connection("default").in_atomic_block:
+        raise TransactionManagementError("Audit requires an active transaction")
+    if not isinstance(actor, ActorContext) or not isinstance(actor.actor_id, str) or not actor.actor_id.strip() or len(actor.actor_id) > 128:
+        raise ValueError("Trusted actor required")
+    if not isinstance(action, ProcurementAuditAction) or not isinstance(event_id, UUID):
+        raise ValueError("Procurement action and event required")
+    if (type(version) is not int or not 1 <= version <= 2**63 - 1
+            or not isinstance(supplier_id, UUID)
+            or (order_id is not None and not isinstance(order_id, UUID))
+            or (receipt_id is not None and not isinstance(receipt_id, UUID))):
+        raise ValueError("Invalid Procurement reference")
+    entry = ProcurementAuditEntry.objects.using("default").create(
+        actor_id=actor.actor_id, action=action.value, event_id=event_id,
+        supplier_id=supplier_id, order_id=order_id, receipt_id=receipt_id,
+        version=version,
+    )
+    return entry.pk
 
 
 def record_catalog_success(

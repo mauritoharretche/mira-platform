@@ -11,7 +11,7 @@ from identity.contracts import Capability
 from .contracts import (
     MAX_STOCK_INTEGER, InventoryUnit, InventoryValidationError,
     InventoryVariantNotFoundError, StockConflictError, StockMovementKind,
-    StockMovementSnapshot, StockNotInitializedError, StockSnapshot,
+    StockMovementSnapshot, StockNotInitializedError, StockSnapshot, StockReceiptResult,
 )
 from .models import StockMovement, StockPosition
 
@@ -58,6 +58,7 @@ def _append(*, actor, position, before, delta, kind, reason):
         sequence=movement.sequence, unit=movement.unit,
         quantity_before=before, delta=delta, quantity_after=position.on_hand,
     )
+    return movement
 
 
 def receive_stock(
@@ -70,6 +71,20 @@ def receive_stock(
     retries conflict, without replay or business retries. An outer transaction
     can still roll back the returned snapshot and its movement/attribution.
     """
+    return _receive_stock(principal=principal, variant_id=variant_id, unit=unit,
+                          quantity=quantity, expected_version=expected_version).stock
+
+
+def receive_stock_for_purchase(
+    *, principal: object, variant_id: UUID, unit: InventoryUnit,
+    quantity: int, expected_version: int | None,
+) -> StockReceiptResult:
+    """Additive contract: return the movement created by the same controlled receipt."""
+    return _receive_stock(principal=principal, variant_id=variant_id, unit=unit,
+                          quantity=quantity, expected_version=expected_version)
+
+
+def _receive_stock(*, principal, variant_id, unit, quantity, expected_version) -> StockReceiptResult:
     with transaction.atomic(using="default"):
         actor = identity_application.require_capability(principal=principal, capability=Capability.RECEIVE_STOCK)
         _quantity(quantity, positive=True)
@@ -101,9 +116,9 @@ def receive_stock(
             position.on_hand += quantity
             position.version += 1
             position.save(using="default", update_fields=["on_hand", "version", "updated_at"])
-        _append(actor=actor, position=position, before=before, delta=quantity,
-                kind=StockMovementKind.RECEIPT, reason=None)
-    return _snapshot(position)
+        movement = _append(actor=actor, position=position, before=before, delta=quantity,
+                           kind=StockMovementKind.RECEIPT, reason=None)
+    return StockReceiptResult(stock=_snapshot(position), movement_id=movement.pk)
 
 
 def adjust_stock(

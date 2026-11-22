@@ -256,3 +256,28 @@ class InventoryMovementAuditEntry(models.Model):
                 | models.Q(sequence__gt=1)
             ), name="audit_inventory_initial_valid"),
         ]
+
+
+class ProcurementAuditEntry(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    actor_id = models.CharField(max_length=128)
+    action = models.CharField(max_length=64, db_collation="C")
+    event_id = models.UUIDField(unique=True)
+    supplier_id = models.UUIDField(null=True)
+    order_id = models.UUIDField(null=True)
+    receipt_id = models.UUIDField(null=True)
+    version = models.PositiveBigIntegerField()
+    occurred_at = models.DateTimeField(auto_now_add=True)
+    result = models.CharField(max_length=16, default="success", editable=False, db_collation="C")
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=models.Q(version__gt=0), name="audit_proc_version_positive"),
+            models.CheckConstraint(condition=models.Q(result="success"), name="audit_proc_result_success"),
+            models.CheckConstraint(condition=GreaterThan(Length(Trim("actor_id")), 0), name="audit_proc_actor_nonempty"),
+            models.CheckConstraint(condition=models.Q(action__in=[
+                "procurement.supplier_created", "procurement.supplier_updated",
+                "procurement.order_created", "procurement.order_updated",
+                "procurement.order_confirmed", "procurement.order_received",
+            ]), name="audit_proc_action_valid"),
+        ]

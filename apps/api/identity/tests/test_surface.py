@@ -29,12 +29,18 @@ class IdentitySurfaceTests(SimpleTestCase):
              "api/v1/operator/catalog/variants/<str:variant_id>/price",
              "api/v1/operator/catalog/variants/<str:variant_id>/price/revisions",
              "api/v1/operator/catalog/variants/<str:variant_id>/measurement-spec",
+             "api/v1/operator/catalog/variants/search",
              "api/v1/operator/catalog/categories", "api/v1/operator/catalog/products/<str:product_id>/category",
              "api/v1/operator/catalog/products/<str:product_id>/active",
              "api/v1/operator/inventory/variants/<str:variant_id>/initial-receipt",
              "api/v1/operator/inventory/variants/<str:variant_id>/adjustments",
              "api/v1/operator/inventory/variants/<str:variant_id>/stock",
-             "api/v1/operator/inventory/variants/<str:variant_id>/movements"],
+             "api/v1/operator/inventory/variants/<str:variant_id>/movements",
+             "api/v1/operator/procurement/suppliers", "api/v1/operator/procurement/suppliers/<str:supplier_id>",
+             "api/v1/operator/procurement/orders", "api/v1/operator/procurement/orders/<str:order_id>",
+             "api/v1/operator/procurement/orders/<str:order_id>/confirm",
+             "api/v1/operator/procurement/orders/<str:order_id>/receipts",
+             "api/v1/operator/procurement/receipts/operations/<str:operation_id>"],
         )
         self.assertEqual(resolve("/api/v1/health/live/").url_name, "health-live")
         self.assertEqual(resolve("/api/v1/health/ready/").url_name, "health-ready")

@@ -1,0 +1,65 @@
+import { expect, test } from "@playwright/test";
+
+test("procurement-journey", async ({ page }, info) => {
+  const project = info.project.name;
+  await page.goto("/login");
+  await page.getByLabel("Usuario", { exact: true }).fill(`fictional-${project}-procurement-journey`);
+  await page.getByLabel("Contraseña", { exact: true }).fill(process.env.MIRA_E2E_PASSWORD!);
+  await page.getByLabel("Contraseña", { exact: true }).press("Enter");
+  await expect(page).toHaveURL(/\/operations\/catalog$/);
+  await page.getByRole("navigation").getByRole("link", { name: "Compras" }).click();
+  await expect(page.getByRole("heading", { name: "Compras y abastecimiento" })).toBeVisible();
+
+  await page.getByLabel("Nombre ficticio").fill(`Fictional ${project} Supply Co`);
+  await page.getByRole("button", { name: "Crear proveedor" }).click();
+  await expect(page.getByRole("status")).toContainText("Proveedor creado");
+  await page.getByLabel("Proveedor activo").selectOption({ label: `Fictional ${project} Supply Co` });
+  await page.getByLabel("Buscar variante por nombre o SKU").fill(`PROC-FIXTURE-${project}`);
+  await page.getByRole("button", { name: "Buscar variantes" }).click();
+  const first = `PROC-FIXTURE-${project}-A`;
+  const second = `PROC-FIXTURE-${project}-B`;
+  await page.getByLabel("Variante", { exact: true }).selectOption({ label: `Fictional ${project} purchase · Fictional pack A · ${first}` });
+  await page.getByLabel("Cantidad EACH", { exact: true }).fill("5");
+  await page.getByLabel("Costo unitario ARS", { exact: true }).fill("12.30");
+  await page.getByRole("button", { name: "Agregar variante" }).click();
+  await page.getByLabel("Variante", { exact: true }).nth(1).selectOption({ label: `Fictional ${project} purchase · Fictional pack B · ${second}` });
+  await page.getByLabel("Cantidad EACH", { exact: true }).nth(1).fill("4");
+  await page.getByLabel("Costo unitario ARS", { exact: true }).nth(1).fill("3.25");
+  await page.getByRole("button", { name: "Crear orden" }).click();
+  await expect(page.getByRole("status")).toContainText("Orden creada en borrador");
+  await expect(page.getByRole("heading", { name: "Detalle de orden" })).toBeVisible();
+  await expect(page.getByText("Total previsto:")).toContainText("ARS 74.50");
+  await page.getByRole("button", { name: "Confirmar orden" }).click();
+  await expect(page.getByRole("status")).toContainText("Orden confirmada");
+  await expect(page.getByRole("heading", { name: "Registrar recepción" })).toBeVisible();
+
+  const receiptGroup = (sku: string) => page.locator("fieldset.proc-line").filter({ hasText: `SKU ${sku}` });
+  await receiptGroup(first).getByLabel("Cantidad entregada EACH").fill("2");
+  await receiptGroup(first).getByLabel("Cantidad aceptada EACH").fill("2");
+  await receiptGroup(second).getByLabel("Cantidad entregada EACH").fill("1");
+  await receiptGroup(second).getByLabel("Cantidad aceptada EACH").fill("1");
+  await page.getByRole("button", { name: "Registrar recepción" }).click();
+  await expect(page.getByRole("status")).toContainText("Recepción registrada");
+  await expect(page.locator(".badge")).toHaveText("PARTIAL");
+  await expect(receiptGroup(first)).toContainText("pendiente 3 EACH");
+  await expect(receiptGroup(second)).toContainText("pendiente 3 EACH");
+
+  await page.getByRole("button", { name: "Consultar versión de stock" }).nth(0).click();
+  await page.getByRole("button", { name: "Consultar versión de stock" }).nth(1).click();
+  await expect(page.getByText("Versión de stock: 1")).toHaveCount(2);
+  await receiptGroup(first).getByLabel("Cantidad entregada EACH").fill("3");
+  await receiptGroup(first).getByLabel("Cantidad aceptada EACH").fill("3");
+  await receiptGroup(second).getByLabel("Cantidad entregada EACH").fill("3");
+  await receiptGroup(second).getByLabel("Cantidad aceptada EACH").fill("3");
+  await page.getByRole("button", { name: "Registrar recepción" }).click();
+  await expect(page.getByRole("status")).toContainText("Recepción registrada");
+  await expect(page.locator(".badge")).toHaveText("COMPLETE");
+  await expect(page.getByRole("row").filter({ hasText: first })).toContainText("5");
+  await expect(page.getByRole("row").filter({ hasText: second })).toContainText("4");
+  await page.getByRole("button", { name: "Consultar stock" }).nth(0).click();
+  await page.getByRole("button", { name: "Consultar stock" }).nth(1).click();
+  await expect(page.getByText("5 EACH", { exact: true })).toBeVisible();
+  await expect(page.getByText("4 EACH", { exact: true })).toBeVisible();
+  await expect(page.getByText(/movimiento de stock/)).toHaveCount(4);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
