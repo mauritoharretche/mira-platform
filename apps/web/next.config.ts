@@ -8,6 +8,7 @@ const endpoints = [
   "catalog/variants/:variantId/measurement-spec",
   "catalog/categories", "catalog/products/:productId/category", "catalog/products/:productId/active",
   "inventory/variants/:variantId/initial-receipt",
+  "inventory/variants/:variantId/adjustments",
   "inventory/variants/:variantId/stock", "inventory/variants/:variantId/movements",
 ];
 

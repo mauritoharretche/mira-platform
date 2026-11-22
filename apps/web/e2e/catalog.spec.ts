@@ -760,6 +760,48 @@ test("catalog-variants", async ({ page }, info) => {
       await expect(page.getByText("El resultado de la recepción es incierto.", { exact: false })).toBeVisible();
       await expect(page.locator(".stock-count")).toHaveText("12 EACH");
       await expect(page.getByRole("button", { name: "Registrar recepción inicial", exact: true })).toHaveCount(0);
+      let adjustmentPosts = 0;
+      const adjustmentPath = `${root}/inventory/variants/${selected}/adjustments`;
+      await page.route(`**${adjustmentPath}`, async (route) => {
+        if (route.request().method() !== "POST") return route.continue();
+        adjustmentPosts += 1;
+        await route.fulfill({ status: 409, json: { error: { code: "stock_version_conflict" } } });
+      });
+      try {
+        await page.getByLabel("Cantidad física contada (EACH)").fill("7");
+        await page.getByLabel("Motivo del ajuste").fill("fictional count draft");
+        await page.getByRole("button", { name: "Revisar ajuste" }).click();
+        await page.getByRole("button", { name: "Confirmar ajuste físico" }).click();
+        await expect(page.getByRole("alert").filter({ hasText: "conflicto pendiente" })).toBeVisible();
+        expect(adjustmentPosts).toBe(1);
+        await page.getByLabel("Presentación / SKU", { exact: true }).selectOption(original);
+        await expect(page.getByText("Un ajuste físico de", { exact: false })).toBeVisible();
+        await page.getByLabel("Presentación / SKU", { exact: true }).selectOption(selected);
+        await expect(page.getByText("Versión del borrador: 1.", { exact: false })).toBeVisible();
+        await page.getByRole("button", { name: "Actualizar consulta" }).click();
+        await expect(page.getByRole("alert").filter({ hasText: "conflicto pendiente" })).toBeVisible();
+        expect(adjustmentPosts).toBe(1);
+        await page.getByRole("button", { name: "Editar sobre esta versión" }).click();
+        await expect(page.getByLabel("Cantidad física contada (EACH)")).toHaveValue("7");
+        await expect(page.getByLabel("Motivo del ajuste")).toHaveValue("fictional count draft");
+      } finally { await page.unroute(`**${adjustmentPath}`); }
+      await page.route(`**${adjustmentPath}`, async (route) => {
+        if (route.request().method() !== "POST") return route.continue();
+        adjustmentPosts += 1;
+        await route.abort("failed");
+      });
+      try {
+        await page.getByRole("button", { name: "Revisar ajuste" }).click();
+        await page.getByRole("button", { name: "Confirmar ajuste físico" }).click();
+        await expect(page.getByRole("alert").filter({ hasText: "resultado del ajuste físico es incierto" })).toBeVisible();
+        expect(adjustmentPosts).toBe(2);
+        await page.getByLabel("Presentación / SKU", { exact: true }).selectOption(original);
+        await expect(page.getByText("Un ajuste físico de", { exact: false })).toBeVisible();
+        await page.getByLabel("Presentación / SKU", { exact: true }).selectOption(selected);
+        await expect(page.getByRole("button", { name: "Confirmar ajuste físico" })).toHaveCount(0);
+        await expect(page.locator(".stock-count")).toHaveText("12 EACH");
+        expect(adjustmentPosts).toBe(2);
+      } finally { await page.unroute(`**${adjustmentPath}`); }
     } finally { releaseReceipt(); await page.unroute(`**${receiptPath}`); }
     expect(await page.locator(".product-workspace").evaluate((workspace) =>
       [".classification-panel", ".variant-panel", ".price-panel", ".measurement-panel", ".identity-panel", ".stock-grid"]

@@ -68,6 +68,22 @@ class OperatorAuthenticationTests(TestCase):
         self.assertCountEqual(state["capabilities"], ["catalog.create_product_with_initial_variant", "catalog.read_product",
                               "inventory.receive_stock", "inventory.read_stock", "inventory.read_stock_movements", "catalog.add_variant_to_product"])
 
+    def test_adjustment_capability_is_discovered_only_while_permission_is_granted(self):
+        sign_in(self.client)
+        capability = "inventory.adjust_stock"
+        permission = Permission.objects.get(content_type__app_label="inventory", codename="adjust_stock")
+        self.assertNotIn(capability, self.client.get(PREFIX + "/auth/session", secure=True).json()["capabilities"])
+        self.user.user_permissions.add(permission)
+        self.assertIn(capability, self.client.get(PREFIX + "/auth/session", secure=True).json()["capabilities"])
+        self.user.user_permissions.remove(permission)
+        self.assertNotIn(capability, self.client.get(PREFIX + "/auth/session", secure=True).json()["capabilities"])
+        group = Group.objects.create(name="fictional-stock-count")
+        group.permissions.add(permission)
+        self.user.groups.add(group)
+        self.assertIn(capability, self.client.get(PREFIX + "/auth/session", secure=True).json()["capabilities"])
+        self.user.groups.remove(group)
+        self.assertNotIn(capability, self.client.get(PREFIX + "/auth/session", secure=True).json()["capabilities"])
+
     def test_absolute_expiry_is_eight_hours_and_reads_cannot_extend_it(self):
         now = timezone.now()
         with patch("identity.http.timezone.now", return_value=now):
