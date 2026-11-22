@@ -297,6 +297,28 @@ th { font-size: .75rem; color: var(--muted); background: var(--surface-inset); }
 .price-history { margin-top: 1.25rem; border-top: 1px solid var(--border); padding-top: 1.25rem; }
 .product-workspace .identity-panel { margin-bottom: 0; }
 .product-workspace .stock-grid .panel:first-child { background: var(--surface-inset); }
+.procurement-workspace { display: grid; gap: 1rem; min-width: 0; }
+.procurement-workspace > .page-heading { margin-bottom: 0; }
+.procurement-workspace .panel { min-width: 0; }
+.procurement-workspace .proc-list { list-style: none; padding: 0; margin: .75rem 0 1rem; display: grid; gap: .375rem; }
+.procurement-workspace .proc-list button { text-align: left; width: 100%; justify-content: flex-start; }
+.procurement-workspace .proc-form { margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+.procurement-workspace .proc-form h3 { margin-bottom: .25rem; }
+.procurement-workspace .proc-line { display: grid; gap: .375rem; border: 1px solid var(--border); border-radius: .5rem; padding: 1rem; margin-top: .5rem; }
+.procurement-workspace .proc-line legend { font-weight: 700; padding: 0 .25rem; overflow-wrap: anywhere; }
+.procurement-workspace .proc-line button { justify-self: start; }
+.procurement-workspace .proc-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.procurement-workspace .proc-inline { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .375rem .75rem; align-items: end; }
+.procurement-workspace .proc-inline label { grid-column: 1 / -1; }
+.procurement-workspace .proc-check { display: inline-flex; align-items: center; gap: .5rem; }
+.procurement-workspace .proc-check input { width: 1.25rem; height: 1.25rem; min-height: 0; }
+.procurement-workspace code { overflow-wrap: anywhere; }
+.procurement-workspace .proc-stock-result { display: block; margin-top: .25rem; font-variant-numeric: tabular-nums; }
+@media (max-width: 47.999rem) {
+  .operator-header nav { flex-wrap: wrap; }
+  .operator-header nav a { white-space: normal; }
+  .procurement-workspace .proc-inline { grid-template-columns: 1fr; }
+}
 @media (min-width: 64rem) {
   .workspace-operation-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

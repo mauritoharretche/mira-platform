@@ -56,3 +56,9 @@ class StockMovementSnapshot:
     quantity_after: int
     reason: str | None
     recorded_at: datetime
+
+
+@dataclass(frozen=True)
+class StockReceiptResult:
+    stock: StockSnapshot
+    movement_id: UUID

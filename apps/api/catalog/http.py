@@ -14,6 +14,7 @@ from identity.contracts import Capability
 from system.http import OperatorAPIView, StrictSerializer, StrictTextField, error_response
 
 from . import application
+from . import references
 from .contracts import CategoryCursor, MeasurementUnit
 
 
@@ -82,6 +83,19 @@ class ProductDetailView(OperatorAPIView):
         except application.ProductNotFoundError:
             return error_response("not_found", 404)
         return Response(_product_payload(product))
+
+
+class VariantReferenceSearchView(OperatorAPIView):
+    http_method_names = ["get", "options"]
+
+    def get(self, request):
+        require_capability(principal=request.user, capability=Capability.READ_PRODUCT)
+        _query(request, {"q"})
+        query = request.query_params.get("q", "")
+        if len(query) > 120 or not query.isprintable():
+            raise serializers.ValidationError({"q": ["Invalid search text."]})
+        matches = references.search_variant_references(query=query)
+        return Response({"variants": matches[:50], "truncated": len(matches) > 50})
 
 
 def _query(request, allowed):

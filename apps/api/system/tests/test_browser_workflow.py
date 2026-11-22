@@ -31,6 +31,8 @@ from catalog.models import Category, Product, Variant, VariantPriceRevision
 from identity.models import LoginAttemptWindow
 from identity.tests.test_http_authentication import PERMISSIONS
 from inventory.models import StockMovement, StockPosition
+from procurement.models import GoodsReceipt, ProcurementEvent, PurchaseOrder, ReceiptLine, Supplier
+from audit.models import ProcurementAuditEntry
 
 
 _REPORT_MAX_BYTES = 4 * 1024 * 1024
@@ -53,12 +55,13 @@ _BROWSER_CASES = {
         "journey", "csrf", "denied", "revoked", "duplicate", "lost-creation",
         "lost-receipt", "expired",
     }),
+    "procurement.spec.ts": frozenset({"procurement-journey"}),
 }
 _FAILED_RESULT_STATES = frozenset({"failed", "timedOut", "interrupted"})
 _TEST_OUTCOMES = frozenset({"expected", "unexpected", "flaky", "skipped"})
 _GLOBAL_LOGIN_LIMIT = 30
 _GLOBAL_LOGIN_WINDOW = timedelta(seconds=60)
-_LOGIN_RESERVATIONS_PER_PROJECT = 18
+_LOGIN_RESERVATIONS_PER_PROJECT = 19
 
 
 def _login_capacity(window, now):
@@ -277,8 +280,8 @@ class BrowserLoginBudgetTests(unittest.TestCase):
                                         monotonic=self.monotonic, wait=self.wait)
 
     def test_capacity_sufficient_does_not_wait(self):
-        result = self.budget((12, self.start + _GLOBAL_LOGIN_WINDOW))
-        self.assertEqual(result, {"before_available": 18, "after_available": 18, "waited_seconds": 0.0})
+        result = self.budget((11, self.start + _GLOBAL_LOGIN_WINDOW))
+        self.assertEqual(result, {"before_available": 19, "after_available": 19, "waited_seconds": 0.0})
         self.assertEqual(self.waits, [])
 
     def test_insufficient_capacity_waits_for_actual_expiry(self):
@@ -573,7 +576,7 @@ class OperatorBrowserTests(LiveServerTestCase):
         from django.contrib.auth.models import Permission
         for project in ("desktop", "mobile"):
             for scenario in ("journey", "csrf", "denied", "revoked", "duplicate", "lost-creation", "lost-receipt", "expired",
-                             "catalog-journey", "catalog-readonly", "catalog-revoked", "catalog-stale", "catalog-lost-category", "catalog-lost-change", "catalog-variants", "catalog-variants-lost", "catalog-price", "catalog-price-lost"):
+                             "catalog-journey", "catalog-readonly", "catalog-revoked", "catalog-stale", "catalog-lost-category", "catalog-lost-change", "catalog-variants", "catalog-variants-lost", "catalog-price", "catalog-price-lost", "procurement-journey"):
                 username = f"fictional-{project}-{scenario}"
                 user = get_user_model()(username=username)
                 validate_password(password, user=user)
@@ -591,6 +594,11 @@ class OperatorBrowserTests(LiveServerTestCase):
                                        "catalog.view_variant_price_history")
                     if scenario == "catalog-price":
                         permissions = (*permissions, "catalog.set_variant_measurement_spec", "catalog.view_variantmeasurementspec")
+                    if scenario == "procurement-journey":
+                        permissions = (*permissions, "procurement.view_supplier", "procurement.manage_supplier",
+                                       "procurement.view_purchaseorder", "procurement.create_purchase_order",
+                                       "procurement.edit_purchase_order", "procurement.confirm_purchase_order",
+                                       "procurement.receive_purchase_order")
                     if scenario == "catalog-readonly":
                         permissions = ("catalog.view_product", "catalog.view_variant", "catalog.view_category")
                     for permission in permissions:
@@ -618,6 +626,14 @@ class OperatorBrowserTests(LiveServerTestCase):
                 Variant.objects.create(product=product, label="Fictional page fixture", sku=f"CATALOG-FIXTURE-{project}-page-{index}")
         fixture_count = Product.objects.count()
         self.assertEqual(fixture_count, 118)
+        procurement_variants = []
+        for project in ("desktop", "mobile"):
+            product = Product.objects.create(name=f"Fictional {project} purchase")
+            for suffix in ("A", "B"):
+                procurement_variants.append(Variant.objects.create(
+                    product=product, label=f"Fictional pack {suffix}", sku=f"PROC-FIXTURE-{project}-{suffix}"))
+        fixture_count = Product.objects.count()
+        self.assertEqual(fixture_count, 120)
         # No PostgreSQL/Django secret is passed to Next or Playwright.
         env = {key: os.environ[key] for key in ("PATH", "HOME", "TMPDIR", "PLAYWRIGHT_BROWSERS_PATH") if key in os.environ}
         env.update(MIRA_API_BASE_URL=self.live_server_url.replace("localhost", "127.0.0.1"), NEXT_TELEMETRY_DISABLED="1",
@@ -747,16 +763,16 @@ class OperatorBrowserTests(LiveServerTestCase):
         self.assertEqual(legacy_variants.count(), 10)
         self.assertEqual(CatalogAuditEntry.objects.filter(variant_id__in=legacy_variants.values("id")).count(), 10)
         self.assertEqual(Product.objects.count(), fixture_count + 12)
-        self.assertEqual(Variant.objects.count(), fixture_count + 20)
+        self.assertEqual(Variant.objects.count(), fixture_count + 22)
         self.assertEqual(CatalogAuditEntry.objects.count(), 16)
-        self.assertEqual(StockPosition.objects.count(), 8)
-        self.assertEqual(StockMovement.objects.count(), 10)
-        self.assertEqual(InventoryMovementAuditEntry.objects.count(), 10)
+        self.assertEqual(StockPosition.objects.count(), 12)
+        self.assertEqual(StockMovement.objects.count(), 18)
+        self.assertEqual(InventoryMovementAuditEntry.objects.count(), 18)
         for variant in legacy_variants:
             audit = CatalogAuditEntry.objects.get(variant_id=variant.pk)
             owner = variant.sku.removeprefix("FICTIONAL-")
             self.assertEqual(audit.actor_id, str(accounts["fictional-" + owner]))
-        for position in StockPosition.objects.all():
+        for position in StockPosition.objects.exclude(variant_id__in=[variant.pk for variant in procurement_variants]):
             movements = list(StockMovement.objects.filter(position=position).order_by("sequence"))
             audits = [InventoryMovementAuditEntry.objects.get(movement_id=item.pk) for item in movements]
             actor = CatalogAuditEntry.objects.get(variant_id=position.variant_id).actor_id if CatalogAuditEntry.objects.filter(variant_id=position.variant_id).exists() else None
@@ -857,3 +873,29 @@ class OperatorBrowserTests(LiveServerTestCase):
             self.assertEqual([(entry.new_net_content_amount, entry.new_net_content_unit) for entry in entries],
                              [(spec.net_content_amount / 2, "G"), (spec.net_content_amount, "G")])
         print("MEASUREMENT_BROWSER_PERSISTENCE_PASS: 2 specifications; 4 versions/audits; no-op, conflict and malformed response did not duplicate writes", flush=True)
+
+        self.assertEqual((Supplier.objects.count(), PurchaseOrder.objects.count(), GoodsReceipt.objects.count()), (2, 2, 4))
+        self.assertEqual((ReceiptLine.objects.count(), ProcurementEvent.objects.count(), ProcurementAuditEntry.objects.count()), (8, 10, 10))
+        for project in ("desktop", "mobile"):
+            actor = str(accounts[f"fictional-{project}-procurement-journey"])
+            order = PurchaseOrder.objects.get(supplier__name=f"Fictional {project} Supply Co")
+            self.assertEqual((order.status, order.version, order.lines.count(), order.receipts.count()), ("COMPLETE", 4, 2, 2))
+            self.assertEqual({line.variant_sku: (line.quantity, line.received_quantity) for line in order.lines.all()},
+                             {f"PROC-FIXTURE-{project}-A": (5, 5), f"PROC-FIXTURE-{project}-B": (4, 4)})
+            events = list(order.events.order_by("version"))
+            self.assertEqual([event.action for event in events],
+                             ["order.created", "order.confirmed", "order.received", "order.received"])
+            self.assertTrue(all(event.actor_id == actor and ProcurementAuditEntry.objects.filter(
+                event_id=event.pk, actor_id=actor).count() == 1 for event in events))
+            self.assertEqual(ProcurementAuditEntry.objects.filter(supplier_id=order.supplier_id, actor_id=actor).count(), 5)
+            for line in order.lines.all():
+                position = StockPosition.objects.get(variant_id=line.variant_id)
+                movements = list(StockMovement.objects.filter(position=position).order_by("sequence"))
+                self.assertEqual((position.on_hand, position.version), (line.quantity, 2))
+                self.assertEqual(len(movements), 2)
+                self.assertTrue(all(movement.kind == "RECEIPT" and
+                                    InventoryMovementAuditEntry.objects.filter(movement_id=movement.pk, actor_id=actor).count() == 1
+                                    for movement in movements))
+                self.assertEqual(set(ReceiptLine.objects.filter(order_line=line).values_list("stock_movement_id", flat=True)),
+                                 {movement.pk for movement in movements})
+        print("PROCUREMENT_BROWSER_PERSISTENCE_PASS: 2 orders, 4 receipts, 8 receipt lines and stock movements; Procurement and Inventory Audit reconciled", flush=True)

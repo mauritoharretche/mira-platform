@@ -9,10 +9,10 @@ from inventory.models import StockMovement, StockPosition
 
 
 class InventoryBoundaryTests(SimpleTestCase):
-    def test_only_four_authorized_internal_operations_are_exposed(self):
+    def test_only_authorized_internal_operations_are_exposed(self):
         operations = {name: value for name, value in inspect.getmembers(application, inspect.isfunction)
                       if value.__module__ == application.__name__ and not name.startswith("_")}
-        self.assertEqual(set(operations), {"receive_stock", "adjust_stock", "get_stock", "list_stock_movements"})
+        self.assertEqual(set(operations), {"receive_stock", "receive_stock_for_purchase", "adjust_stock", "get_stock", "list_stock_movements"})
         for operation in operations.values():
             params = inspect.signature(operation).parameters
             self.assertEqual(params["principal"].kind, inspect.Parameter.KEYWORD_ONLY)

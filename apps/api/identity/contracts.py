@@ -19,6 +19,13 @@ class Capability(Enum):
     ADJUST_STOCK = "inventory.adjust_stock"
     READ_STOCK = "inventory.read_stock"
     READ_STOCK_MOVEMENTS = "inventory.read_stock_movements"
+    READ_SUPPLIER = "procurement.read_supplier"
+    MANAGE_SUPPLIER = "procurement.manage_supplier"
+    READ_PURCHASE_ORDER = "procurement.read_purchase_order"
+    CREATE_PURCHASE_ORDER = "procurement.create_purchase_order"
+    EDIT_PURCHASE_ORDER = "procurement.edit_purchase_order"
+    CONFIRM_PURCHASE_ORDER = "procurement.confirm_purchase_order"
+    RECEIVE_PURCHASE_ORDER = "procurement.receive_purchase_order"
 
 
 @dataclass(frozen=True)

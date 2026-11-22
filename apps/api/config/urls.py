@@ -1,8 +1,10 @@
 from django.urls import include, path
 
-from catalog.http import ProductVariantsView, CategoriesView, ProductActiveView, ProductCategoryView, ProductCreateView, ProductDetailView, VariantPriceView, VariantPriceHistoryView, VariantMeasurementSpecView
+from catalog.http import ProductVariantsView, CategoriesView, ProductActiveView, ProductCategoryView, ProductCreateView, ProductDetailView, VariantPriceView, VariantPriceHistoryView, VariantMeasurementSpecView, VariantReferenceSearchView
 from identity.http import OperatorLoginView, csrf_token, session_logout, session_status
 from inventory.http import AdjustmentView, InitialReceiptView, MovementsView, StockView
+from procurement.http import (ConfirmOrderView, OrderView, OrdersView, ReceiptOperationView,
+                              ReceiveOrderView, SupplierView, SuppliersView)
 
 urlpatterns = [
     path("api/v1/", include("system.urls")),
@@ -16,6 +18,7 @@ urlpatterns = [
     path("api/v1/operator/catalog/variants/<str:variant_id>/price", VariantPriceView.as_view(), name="operator-variant-price"),
     path("api/v1/operator/catalog/variants/<str:variant_id>/price/revisions", VariantPriceHistoryView.as_view(), name="operator-variant-price-history"),
     path("api/v1/operator/catalog/variants/<str:variant_id>/measurement-spec", VariantMeasurementSpecView.as_view(), name="operator-variant-measurement-spec"),
+    path("api/v1/operator/catalog/variants/search", VariantReferenceSearchView.as_view(), name="operator-variant-search"),
     path("api/v1/operator/catalog/categories", CategoriesView.as_view(), name="operator-categories"),
     path("api/v1/operator/catalog/products/<str:product_id>/category", ProductCategoryView.as_view(), name="operator-product-category"),
     path("api/v1/operator/catalog/products/<str:product_id>/active", ProductActiveView.as_view(), name="operator-product-active"),
@@ -23,4 +26,11 @@ urlpatterns = [
     path("api/v1/operator/inventory/variants/<str:variant_id>/adjustments", AdjustmentView.as_view(), name="operator-stock-adjustments"),
     path("api/v1/operator/inventory/variants/<str:variant_id>/stock", StockView.as_view(), name="operator-stock"),
     path("api/v1/operator/inventory/variants/<str:variant_id>/movements", MovementsView.as_view(), name="operator-movements"),
+    path("api/v1/operator/procurement/suppliers", SuppliersView.as_view(), name="operator-suppliers"),
+    path("api/v1/operator/procurement/suppliers/<str:supplier_id>", SupplierView.as_view(), name="operator-supplier"),
+    path("api/v1/operator/procurement/orders", OrdersView.as_view(), name="operator-purchase-orders"),
+    path("api/v1/operator/procurement/orders/<str:order_id>", OrderView.as_view(), name="operator-purchase-order"),
+    path("api/v1/operator/procurement/orders/<str:order_id>/confirm", ConfirmOrderView.as_view(), name="operator-confirm-purchase-order"),
+    path("api/v1/operator/procurement/orders/<str:order_id>/receipts", ReceiveOrderView.as_view(), name="operator-receive-purchase-order"),
+    path("api/v1/operator/procurement/receipts/operations/<str:operation_id>", ReceiptOperationView.as_view(), name="operator-receipt-operation"),
 ]
