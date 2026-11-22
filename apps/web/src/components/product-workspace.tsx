@@ -62,7 +62,7 @@ export function ProductWorkspace({ productId, returnHref }: { productId: string;
   if (!canRead) return <>{back}<section className="panel"><h1 id="product-title" tabIndex={-1}>Acceso restringido</h1><p role="alert">Tu cuenta no tiene permiso para consultar productos.</p></section></>;
   const current = product?.id === productId ? product : null;
   const variantId = current?.variants.some((item) => item.id === selected) ? selected : current?.variants[0]?.id ?? "";
-  return <>
+  return <div className="product-workspace">
     {back}
     <div className="page-heading product-heading"><div><p className="eyebrow">Ficha de producto</p><h1 id="product-title" tabIndex={-1}>{current?.name ?? "Consultando producto…"}</h1></div>
       <button className="button-quiet" disabled={locked} onClick={() => { if (permits.current.busy) return; reads.current.invalidate(); setError(""); setAttempt((value) => value + 1); }}>Actualizar detalle</button>
@@ -85,8 +85,20 @@ export function ProductWorkspace({ productId, returnHref }: { productId: string;
           } : previous);
           setSelected(variant.id);
         }} />
-      {Object.entries(priceUncertain).filter(([id, uncertain]) => id !== variantId && uncertain).map(([id]) =>
-        <p key={`price-warning:${id}`} role="status" className="notice">El precio de {current.variants.find((item) => item.id === id)?.sku ?? "otra variante"} requiere revisión. Cambiar de variante no confirma ni reenvía esa escritura.</p>)}
+      <section className="variant-attention" aria-label="Operaciones pendientes en otras variantes">
+        {Object.entries(priceConflicts).filter(([id]) => id !== variantId).map(([id]) =>
+          <p key={`price-conflict:${id}`} role="status" className="notice">El precio de {current.variants.find((item) => item.id === id)?.sku ?? "otra variante"} tiene un conflicto pendiente. El borrador se conserva; volvé a esa variante para consultar la revisión y decidir cómo continuar.</p>)}
+        {Object.entries(priceUncertain).filter(([id, uncertain]) => id !== variantId && uncertain).map(([id]) =>
+          <p key={`price-warning:${id}`} role="status" className="notice">El precio de {current.variants.find((item) => item.id === id)?.sku ?? "otra variante"} requiere revisión. Cambiar de variante no confirma ni reenvía esa escritura.</p>)}
+        {Object.entries(measurementConflicts).filter(([id]) => id !== variantId).map(([id]) =>
+          <p key={`measurement-conflict:${id}`} role="status" className="notice">La medición de {current.variants.find((item) => item.id === id)?.sku ?? "otra variante"} tiene un conflicto pendiente. El borrador se conserva; volvé a esa variante para consultar la versión y decidir cómo continuar.</p>)}
+        {Object.entries(measurementUncertain).filter(([id, uncertain]) => id !== variantId && uncertain).map(([id]) =>
+          <p key={`measurement-warning:${id}`} role="status" className="notice">La medición de {current.variants.find((item) => item.id === id)?.sku ?? "otra variante"} requiere revisión. Cambiar de variante no confirma ni reenvía esa escritura.</p>)}
+        {Object.entries(stockOutcomes).filter(([id, outcome]) => id !== variantId && outcome !== "confirmed").map(([id, outcome]) =>
+          <p key={`stock-warning:${id}`} role="status" className="notice">Una recepción de {current.variants.find((item) => item.id === id)?.sku ?? "otra variante"} {outcome === "conflict" ? "tiene un conflicto y" : "tiene un resultado incierto y"} requiere revisión. Cambiar de selección no confirma ni reenvía esa escritura.</p>)}
+      </section>
+      {!variantId && <p role="status" className="panel empty-state">No hay una variante disponible para consultar precio, medición o inventario.</p>}
+      {variantId && <>
       <ProductPricePanel key={`price:${productId}:${variantId}`} variantId={variantId} locked={locked}
         uncertain={priceUncertain[variantId] ?? false} onUncertain={() => setPriceUncertain((previous) => ({ ...previous, [variantId]: true }))}
         pendingConflict={priceConflicts[variantId] ?? null}
@@ -98,8 +110,6 @@ export function ProductWorkspace({ productId, returnHref }: { productId: string;
           return updated;
         })}
         acquire={acquire} release={release} />
-      {Object.entries(measurementUncertain).filter(([id, uncertain]) => id !== variantId && uncertain).map(([id]) =>
-        <p key={`measurement-warning:${id}`} role="status" className="notice">La medición de {current.variants.find((item) => item.id === id)?.sku ?? "otra variante"} requiere revisión. Cambiar de variante no confirma ni reenvía esa escritura.</p>)}
       <ProductMeasurementPanel key={`measurement:${productId}:${variantId}`} variantId={variantId} locked={locked}
         savedDraft={measurementDrafts[variantId] ?? null} onDraft={(draft) => setMeasurementDrafts((previous) => ({ ...previous, [variantId]: draft }))}
         onConfirmed={() => setMeasurementDrafts((previous) => { const next = { ...previous }; delete next[variantId]; return next; })}
@@ -109,11 +119,10 @@ export function ProductWorkspace({ productId, returnHref }: { productId: string;
         uncertain={measurementUncertain[variantId] ?? false}
         onUncertain={() => setMeasurementUncertain((previous) => ({ ...previous, [variantId]: true }))}
         acquire={acquire} release={release} />
-      {Object.entries(stockOutcomes).filter(([id, outcome]) => id !== variantId && outcome !== "confirmed").map(([id]) =>
-        <p key={`stock-warning:${id}`} role="status" className="notice">Una recepción de {current.variants.find((item) => item.id === id)?.sku ?? "otra variante"} requiere revisión. Cambiar de selección no confirma ni reenvía esa escritura.</p>)}
       <StockPanel key={`stock:${productId}:${variantId}`} product={current} variantId={variantId} locked={locked}
         outcome={stockOutcomes[variantId] ?? null} acquire={acquire} release={release}
         onOutcome={(kind) => setStockOutcomes((previous) => ({ ...previous, [variantId]: kind }))} />
+      </>}
     </>}
-  </>;
+  </div>;
 }

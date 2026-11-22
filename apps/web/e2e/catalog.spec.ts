@@ -657,6 +657,9 @@ test("catalog-variants", async ({ page }, info) => {
   await fixture(page, info, "catalog-variants");
   const productId = new URL(page.url()).pathname.split("/").pop()!;
   const original = await page.getByLabel("Presentación / SKU", { exact: true }).inputValue();
+  const selectedIdentity = page.locator(".variant-panel .selected-variant-identity");
+  await expect(selectedIdentity.locator("strong")).toHaveText("Fictional fixture");
+  await expect(selectedIdentity.locator("span")).toHaveText(`SKU: CATALOG-FIXTURE-${info.project.name}-catalog-variants`);
   const detail = `${root}/catalog/products/${productId}`;
   let releaseRead!: () => void;
   let readStarted!: () => void;
@@ -681,7 +684,7 @@ test("catalog-variants", async ({ page }, info) => {
   try {
     await page.getByRole("button", { name: "Actualizar detalle", exact: true }).click();
     await started;
-    await page.getByLabel("Etiqueta de presentación", { exact: true }).fill("Fictional second pack");
+    await page.getByLabel("Etiqueta de presentación", { exact: true }).fill("Fictional fixture second pack");
     await page.getByLabel("SKU de la nueva variante", { exact: true }).fill(`BC01A-${info.project.name}-confirmed`);
     const created = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === `${detail}/variants`);
     await page.getByRole("button", { name: "Agregar variante", exact: true }).click();
@@ -695,6 +698,8 @@ test("catalog-variants", async ({ page }, info) => {
     await expect(page.getByText("Variante creada y seleccionada.", { exact: true })).toBeVisible();
     const selected = await page.getByLabel("Presentación / SKU", { exact: true }).inputValue();
     expect(selected).not.toBe(original);
+    await expect(selectedIdentity.locator("strong")).toHaveText("Fictional fixture second pack");
+    await expect(selectedIdentity.locator("span")).toHaveText(`SKU: BC01A-${info.project.name}-confirmed`);
     await expect(page.getByLabel("Categoría del producto", { exact: true })).toBeEnabled();
     await page.getByLabel("Categoría del producto", { exact: true }).selectOption({ label: categoryName(info, "B") });
     await page.getByRole("button", { name: "Guardar categoría", exact: true }).click();
@@ -708,8 +713,12 @@ test("catalog-variants", async ({ page }, info) => {
     await expect(page.getByRole("button", { name: "Desactivar producto", exact: true })).toBeEnabled();
     await expect(page.getByText("Sin recepción inicial", { exact: true })).toBeVisible();
     await page.getByLabel("Presentación / SKU", { exact: true }).selectOption(original);
+    await expect(selectedIdentity.locator("strong")).toHaveText("Fictional fixture");
+    await expect(selectedIdentity.locator("span")).toHaveText(`SKU: CATALOG-FIXTURE-${info.project.name}-catalog-variants`);
     await expect(page.locator(".identity-panel .identifier")).toHaveText(original);
     await page.getByLabel("Presentación / SKU", { exact: true }).selectOption(selected);
+    await expect(selectedIdentity.locator("strong")).toHaveText("Fictional fixture second pack");
+    await expect(selectedIdentity.locator("span")).toHaveText(`SKU: BC01A-${info.project.name}-confirmed`);
     await expect(page.locator(".identity-panel .identifier")).toHaveText(selected);
     await expect(page.getByText("Sin recepción inicial", { exact: true })).toBeVisible();
     await page.getByLabel("Etiqueta de presentación", { exact: true }).fill("Fictional duplicate");
@@ -752,10 +761,55 @@ test("catalog-variants", async ({ page }, info) => {
       await expect(page.locator(".stock-count")).toHaveText("12 EACH");
       await expect(page.getByRole("button", { name: "Registrar recepción inicial", exact: true })).toHaveCount(0);
     } finally { releaseReceipt(); await page.unroute(`**${receiptPath}`); }
-    for (const width of [320, 390, 768, 1280]) {
+    expect(await page.locator(".product-workspace").evaluate((workspace) =>
+      [".classification-panel", ".variant-panel", ".price-panel", ".measurement-panel", ".identity-panel", ".stock-grid"]
+        .map((selector) => workspace.querySelector(selector))
+        .every((element, index, elements) => element !== null && (index === 0 || Boolean(elements[index - 1]!.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING))))).toBe(true);
+    await expect(page.locator(".variant-panel .workspace-block-label")).toHaveText(["Registrado · variante seleccionada", "En edición"]);
+    await page.getByLabel("Presentación / SKU", { exact: true }).focus();
+    await page.keyboard.press("Tab");
+    await expect(page.getByLabel("Etiqueta de presentación", { exact: true })).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(page.getByLabel("Presentación / SKU", { exact: true })).toBeFocused();
+    for (const width of [320, 390, 768, 1024, 1280, 1440]) {
       await page.setViewportSize({ width, height: 844 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await expect(selectedIdentity).toBeVisible();
+      expect(await selectedIdentity.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      if (width === 320 || width === 390) {
+        await page.getByLabel("Presentación / SKU", { exact: true }).selectOption(original);
+        await expect(selectedIdentity.locator("strong")).toHaveText("Fictional fixture");
+        await expect(selectedIdentity.locator("span")).toHaveText(`SKU: CATALOG-FIXTURE-${info.project.name}-catalog-variants`);
+        expect(await selectedIdentity.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+        await page.getByLabel("Presentación / SKU", { exact: true }).selectOption(selected);
+        await expect(selectedIdentity.locator("strong")).toHaveText("Fictional fixture second pack");
+        await expect(selectedIdentity.locator("span")).toHaveText(`SKU: BC01A-${info.project.name}-confirmed`);
+      }
+      for (const name of ["Actualizar detalle", "Agregar variante", "Actualizar consulta"]) {
+        const box = await page.getByRole("button", { name, exact: true }).boundingBox();
+        expect(box).not.toBeNull();
+        expect(box!.width).toBeGreaterThanOrEqual(44);
+        expect(box!.height).toBeGreaterThanOrEqual(44);
+      }
     }
+    const longName = `Producto ficticio ${"presentación extensa ".repeat(8)}`.slice(0, 255);
+    await page.route(`**${detail}`, async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      const response = await route.fetch();
+      const data = await response.json();
+      await route.fulfill({ response, json: { ...data, name: longName, variants: [] } });
+    });
+    try {
+      await page.getByRole("button", { name: "Actualizar detalle", exact: true }).click();
+      await expect(page.getByRole("heading", { level: 1, name: longName })).toBeVisible();
+      await expect(page.getByLabel("Presentación / SKU", { exact: true })).toBeDisabled();
+      await expect(page.locator(".price-panel, .measurement-panel, .stock-grid")).toHaveCount(0);
+      await expect(page.getByText("No hay una variante disponible para consultar precio, medición o inventario.")).toBeVisible();
+      for (const width of [320, 390, 768, 1024, 1280, 1440]) {
+        await page.setViewportSize({ width, height: 844 });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      }
+    } finally { await page.unroute(`**${detail}`); }
   } finally { releaseRead(); releaseCreate(); await page.unroute(`**${detail}`); await page.unroute(`**${detail}/variants`); }
 });
 
@@ -802,7 +856,12 @@ test("catalog-price", async ({ page }, info) => {
   await expect(page.locator("#variant option")).toHaveCount(2);
   const values = await page.locator("#variant option").evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value));
   const other = values.find((value) => value && value !== original)!;
+  const selectedIdentity = page.locator(".variant-panel .selected-variant-identity");
+  await expect(selectedIdentity.locator("strong")).toHaveText("Fictional fixture");
+  await expect(selectedIdentity.locator("span")).toHaveText(`SKU: CATALOG-FIXTURE-${info.project.name}-catalog-price`);
   await expect(page.getByText("Sin precio asignado", { exact: true })).toBeVisible();
+  await expect(page.locator(".price-panel .workspace-block-label")).toHaveText(["Registrado", "En edición"]);
+  await expect(page.locator(".measurement-panel .workspace-block-label")).toHaveText(["Registrado", "En edición"]);
   const pricePath = `${root}/catalog/variants/${original}/price`;
   let pricePosts = 0;
   page.on("request", (request) => {
@@ -860,9 +919,15 @@ test("catalog-price", async ({ page }, info) => {
   }
   expect(pricePosts).toBe(3); // Initial write, no-op, and exactly one conflicted write.
   await selector.selectOption(other);
+  await expect(selectedIdentity.locator("strong")).toHaveText("Fictional alternate");
+  await expect(selectedIdentity.locator("span")).toHaveText(`SKU: CATALOG-FIXTURE-${info.project.name}-catalog-price-alternate`);
   await expect(page.getByText("Sin precio asignado", { exact: true })).toBeVisible();
   await expect(page.locator(".price-panel .error-box")).toHaveCount(0);
+  await expect(page.getByText("tiene un conflicto pendiente. El borrador se conserva", { exact: false })).toBeVisible();
   await selector.selectOption(original);
+  await expect(selectedIdentity.locator("strong")).toHaveText("Fictional fixture");
+  await expect(selectedIdentity.locator("span")).toHaveText(`SKU: CATALOG-FIXTURE-${info.project.name}-catalog-price`);
+  await expect(page.getByText("tiene un conflicto pendiente. El borrador se conserva", { exact: false })).toHaveCount(0);
   await expect(page.locator(".price-panel .error-box")).toContainText("revisión de precio cambió");
   await expect(page.getByLabel("Importe ARS por variante")).toHaveValue("14,50");
   await expect(page.getByRole("button", { name: "Guardar precio", exact: true })).toBeDisabled();
@@ -952,7 +1017,9 @@ test("catalog-price", async ({ page }, info) => {
   await expect(page.locator(".measurement-panel")).toHaveCount(1);
   await expect(page.getByText("Sin especificación declarada", { exact: true })).toBeVisible();
   await expect(page.locator(".measurement-panel .error-box")).toHaveCount(0);
+  await expect(page.getByText("tiene un conflicto pendiente. El borrador se conserva", { exact: false })).toBeVisible();
   await selector.selectOption(original);
+  await expect(page.getByText("tiene un conflicto pendiente. El borrador se conserva", { exact: false })).toHaveCount(0);
   await expect(page.getByLabel("Contenido neto")).toHaveValue("500");
   await expect(page.locator(".measurement-panel .error-box")).toContainText("versión de medición cambió");
   await expect(page.getByRole("button", { name: "Editar sobre esta versión" })).toHaveCount(0);
