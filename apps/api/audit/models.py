@@ -281,3 +281,20 @@ class ProcurementAuditEntry(models.Model):
                 "procurement.order_confirmed", "procurement.order_received",
             ]), name="audit_proc_action_valid"),
         ]
+
+
+class InventoryLotAuditEntry(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    event_id = models.UUIDField(unique=True)
+    actor_id = models.CharField(max_length=128)
+    action = models.CharField(max_length=40, db_collation="C")
+    occurred_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=GreaterThan(Length(Trim("actor_id")), 0), name="audit_lot_actor_nonempty"),
+            models.CheckConstraint(condition=models.Q(action__in=[
+                "location.created", "lot.created", "lot.status", "lot.received",
+                "lot.transferred", "lot.corrected",
+            ]), name="audit_lot_action_valid"),
+        ]

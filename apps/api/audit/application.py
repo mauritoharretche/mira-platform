@@ -9,7 +9,23 @@ from identity.contracts import ActorContext
 from .contracts import (CatalogAuditAction, CatalogChangeAuditAction, CatalogMeasurementAuditAction,
                         CatalogPriceAuditAction, InventoryMovementAuditAction, ProcurementAuditAction)
 from .models import (CatalogAuditEntry, CatalogChangeAuditEntry, CatalogMeasurementAuditEntry,
-                     CatalogPriceAuditEntry, InventoryMovementAuditEntry, ProcurementAuditEntry)
+                     CatalogPriceAuditEntry, InventoryMovementAuditEntry, ProcurementAuditEntry,
+                     InventoryLotAuditEntry)
+
+
+def record_inventory_lot_event(*, actor: ActorContext, event_id: UUID, action: str) -> UUID:
+    if not transaction.get_connection("default").in_atomic_block:
+        raise TransactionManagementError("Audit requires an active transaction")
+    if not isinstance(actor, ActorContext) or not actor.actor_id or len(actor.actor_id) > 128:
+        raise ValueError("Trusted actor required")
+    if not isinstance(event_id, UUID) or action not in {
+        "location.created", "lot.created", "lot.status", "lot.received",
+        "lot.transferred", "lot.corrected",
+    }:
+        raise ValueError("Unknown Inventory lot event")
+    entry = InventoryLotAuditEntry.objects.using("default").create(
+        actor_id=actor.actor_id, event_id=event_id, action=action)
+    return entry.pk
 
 
 def record_procurement_event(*, actor: ActorContext, action: ProcurementAuditAction,

@@ -62,3 +62,73 @@ class StockMovement(models.Model):
                 | models.Q(sequence__gt=1)
             ), name="inventory_movement_initial_valid"),
         ]
+
+
+class StockLocation(models.Model):
+    """A named physical place in the single pilot operation."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    code = models.CharField(max_length=40, db_collation="C", unique=True)
+    name = models.CharField(max_length=120)
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        permissions = [("manage_stock_locations", "Can manage stock locations")]
+
+
+class StockLot(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    variant = models.ForeignKey("catalog.Variant", on_delete=models.PROTECT, related_name="+")
+    code = models.CharField(max_length=80, db_collation="C")
+    expires_on = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=16, db_collation="C", default="ACTIVE")
+    version = models.PositiveBigIntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        permissions = [
+            ("manage_stock_lots", "Can manage stock lots"),
+            ("allocate_stock_lots", "Can allocate received stock to lots"),
+            ("transfer_stock_lots", "Can transfer lots between locations"),
+            ("correct_stock_lots", "Can correct physical lot quantities"),
+        ]
+        constraints = [
+            models.UniqueConstraint(fields=["variant", "code"], name="inventory_lot_variant_code_unique"),
+            models.CheckConstraint(condition=models.Q(status__in=["ACTIVE", "BLOCKED", "QUARANTINE"]), name="inventory_lot_status_valid"),
+            models.CheckConstraint(condition=models.Q(version__gt=0), name="inventory_lot_version_positive"),
+        ]
+
+
+class StockLotBalance(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    lot = models.ForeignKey(StockLot, on_delete=models.PROTECT, related_name="balances")
+    location = models.ForeignKey(StockLocation, on_delete=models.PROTECT, related_name="+")
+    quantity = models.PositiveBigIntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["lot", "location"], name="inventory_lot_location_unique"),
+            models.CheckConstraint(condition=models.Q(quantity__lte=MAX_STOCK_INTEGER), name="inventory_lot_quantity_valid"),
+        ]
+
+
+class StockLotEvent(models.Model):
+    """Append-only explanation of lot/location mutations; Audit attributes each row."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    lot = models.ForeignKey(StockLot, on_delete=models.PROTECT, null=True, related_name="events")
+    location = models.ForeignKey(StockLocation, on_delete=models.PROTECT, null=True, related_name="+")
+    other_location = models.ForeignKey(StockLocation, on_delete=models.PROTECT, null=True, related_name="+")
+    stock_movement_id = models.UUIDField(null=True)
+    action = models.CharField(max_length=24, db_collation="C")
+    quantity = models.BigIntegerField(default=0)
+    reason = models.CharField(max_length=255, null=True)
+    actor_id = models.CharField(max_length=128)
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=models.Q(action__in=[
+            "location.created", "lot.created", "lot.status", "lot.received",
+            "lot.transferred", "lot.corrected",
+        ]), name="inventory_lot_event_action_valid")]

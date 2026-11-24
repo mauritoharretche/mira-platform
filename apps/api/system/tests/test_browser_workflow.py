@@ -32,7 +32,9 @@ from identity.models import LoginAttemptWindow
 from identity.tests.test_http_authentication import PERMISSIONS
 from inventory.models import StockMovement, StockPosition
 from procurement.models import GoodsReceipt, ProcurementEvent, PurchaseOrder, ReceiptLine, Supplier
-from audit.models import ProcurementAuditEntry
+from audit.models import ProcurementAuditEntry, InventoryLotAuditEntry
+from inventory.models import StockLocation, StockLot, StockLotBalance, StockLotEvent
+from procurement.models import ReceiptAllocation
 
 
 _REPORT_MAX_BYTES = 4 * 1024 * 1024
@@ -598,7 +600,9 @@ class OperatorBrowserTests(LiveServerTestCase):
                         permissions = (*permissions, "procurement.view_supplier", "procurement.manage_supplier",
                                        "procurement.view_purchaseorder", "procurement.create_purchase_order",
                                        "procurement.edit_purchase_order", "procurement.confirm_purchase_order",
-                                       "procurement.receive_purchase_order")
+                                       "procurement.receive_purchase_order", "inventory.view_stocklot",
+                                       "inventory.view_stocklocation", "inventory.manage_stock_locations",
+                                       "inventory.manage_stock_lots", "inventory.allocate_stock_lots")
                     if scenario == "catalog-readonly":
                         permissions = ("catalog.view_product", "catalog.view_variant", "catalog.view_category")
                     for permission in permissions:
@@ -876,6 +880,8 @@ class OperatorBrowserTests(LiveServerTestCase):
 
         self.assertEqual((Supplier.objects.count(), PurchaseOrder.objects.count(), GoodsReceipt.objects.count()), (2, 2, 4))
         self.assertEqual((ReceiptLine.objects.count(), ProcurementEvent.objects.count(), ProcurementAuditEntry.objects.count()), (8, 10, 10))
+        self.assertEqual((StockLocation.objects.count(), StockLot.objects.count(), ReceiptAllocation.objects.count()), (2, 2, 4))
+        self.assertEqual(StockLotEvent.objects.count(), InventoryLotAuditEntry.objects.count())
         for project in ("desktop", "mobile"):
             actor = str(accounts[f"fictional-{project}-procurement-journey"])
             order = PurchaseOrder.objects.get(supplier__name=f"Fictional {project} Supply Co")
@@ -898,4 +904,9 @@ class OperatorBrowserTests(LiveServerTestCase):
                                     for movement in movements))
                 self.assertEqual(set(ReceiptLine.objects.filter(order_line=line).values_list("stock_movement_id", flat=True)),
                                  {movement.pk for movement in movements})
+                allocations = ReceiptAllocation.objects.filter(receipt_line__order_line=line)
+                if line.variant_sku.endswith("-A"):
+                    self.assertEqual((allocations.count(), StockLotBalance.objects.get(lot__variant_id=line.variant_id).quantity), (2, 5))
+                else:
+                    self.assertFalse(allocations.exists())
         print("PROCUREMENT_BROWSER_PERSISTENCE_PASS: 2 orders, 4 receipts, 8 receipt lines and stock movements; Procurement and Inventory Audit reconciled", flush=True)

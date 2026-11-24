@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from django.db import IntegrityError, transaction
+from django.db.models import Sum
 
 from audit import application as audit_application
 from audit.contracts import InventoryMovementAuditAction
@@ -13,7 +14,7 @@ from .contracts import (
     InventoryVariantNotFoundError, StockConflictError, StockMovementKind,
     StockMovementSnapshot, StockNotInitializedError, StockSnapshot, StockReceiptResult,
 )
-from .models import StockMovement, StockPosition
+from .models import StockLotBalance, StockMovement, StockPosition
 
 
 def _quantity(value: int, *, positive: bool = False) -> int:
@@ -139,6 +140,10 @@ def adjust_stock(
             raise StockNotInitializedError("stock position is not initialized")
         if expected_version != position.version:
             raise StockConflictError("stock position has changed")
+        allocated = (StockLotBalance.objects.using("default").filter(lot__variant_id=variant_id)
+                     .aggregate(total=Sum("quantity"))["total"] or 0)
+        if new_on_hand < allocated:
+            raise StockConflictError("stock cannot fall below its physical lot allocation")
         if position.on_hand == new_on_hand:
             return _snapshot(position)
         if position.version == MAX_STOCK_INTEGER:

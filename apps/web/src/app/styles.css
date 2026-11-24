@@ -313,6 +313,14 @@ th { font-size: .75rem; color: var(--muted); background: var(--surface-inset); }
 .procurement-workspace .proc-check { display: inline-flex; align-items: center; gap: .5rem; }
 .procurement-workspace .proc-check input { width: 1.25rem; height: 1.25rem; min-height: 0; }
 .procurement-workspace code { overflow-wrap: anywhere; }
+.lot-workspace { display: grid; gap: 1rem; min-width: 0; }
+.lot-workspace .panel { min-width: 0; }
+.lot-workspace form { display: grid; gap: .5rem; margin-top: 1rem; }
+.lot-workspace form button { justify-self: start; }
+.lot-workspace .lot-inline { display: flex; gap: .5rem; flex-wrap: wrap; }
+.lot-workspace .lot-inline input { flex: 1 1 12rem; min-width: 0; }
+.lot-workspace table { font-variant-numeric: tabular-nums; }
+.lot-workspace td { overflow-wrap: anywhere; }
 .procurement-workspace .proc-stock-result { display: block; margin-top: .25rem; font-variant-numeric: tabular-nums; }
 @media (max-width: 47.999rem) {
   .operator-header nav { flex-wrap: wrap; }

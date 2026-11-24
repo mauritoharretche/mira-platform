@@ -3,6 +3,7 @@ from django.urls import include, path
 from catalog.http import ProductVariantsView, CategoriesView, ProductActiveView, ProductCategoryView, ProductCreateView, ProductDetailView, VariantPriceView, VariantPriceHistoryView, VariantMeasurementSpecView, VariantReferenceSearchView
 from identity.http import OperatorLoginView, csrf_token, session_logout, session_status
 from inventory.http import AdjustmentView, InitialReceiptView, MovementsView, StockView
+from inventory.lot_http import LocationsView, LotsView, LotStatusView, LotTransferView, LotCorrectionView
 from procurement.http import (ConfirmOrderView, OrderView, OrdersView, ReceiptOperationView,
                               ReceiveOrderView, SupplierView, SuppliersView)
 
@@ -26,6 +27,11 @@ urlpatterns = [
     path("api/v1/operator/inventory/variants/<str:variant_id>/adjustments", AdjustmentView.as_view(), name="operator-stock-adjustments"),
     path("api/v1/operator/inventory/variants/<str:variant_id>/stock", StockView.as_view(), name="operator-stock"),
     path("api/v1/operator/inventory/variants/<str:variant_id>/movements", MovementsView.as_view(), name="operator-movements"),
+    path("api/v1/operator/inventory/locations", LocationsView.as_view(), name="operator-stock-locations"),
+    path("api/v1/operator/inventory/variants/<str:variant_id>/lots", LotsView.as_view(), name="operator-stock-lots"),
+    path("api/v1/operator/inventory/lots/<str:lot_id>/status", LotStatusView.as_view(), name="operator-lot-status"),
+    path("api/v1/operator/inventory/lots/<str:lot_id>/transfer", LotTransferView.as_view(), name="operator-lot-transfer"),
+    path("api/v1/operator/inventory/lots/<str:lot_id>/correction", LotCorrectionView.as_view(), name="operator-lot-correction"),
     path("api/v1/operator/procurement/suppliers", SuppliersView.as_view(), name="operator-suppliers"),
     path("api/v1/operator/procurement/suppliers/<str:supplier_id>", SupplierView.as_view(), name="operator-supplier"),
     path("api/v1/operator/procurement/orders", OrdersView.as_view(), name="operator-purchase-orders"),
