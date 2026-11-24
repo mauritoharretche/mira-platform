@@ -8,11 +8,12 @@ export type Order = { id: string; supplier_id: string; supplier_name: string; st
   receipts?: Receipt[] };
 export type Receipt = { id: string; order_id: string; operation_id: string; recorded_at: string;
   lines: { order_line_id: string; delivered_quantity: string; accepted_quantity: string;
-    difference_reason: string | null; stock_movement_id: string | null }[] };
+    difference_reason: string | null; stock_movement_id: string | null;
+    allocations: { lot_id: string; location_id: string; quantity: string }[] | null }[] };
 export type VariantReference = { id: string; label: string; sku: string; product_name: string };
 export type DraftLine = { variant_id: string; quantity: string; unit: "EACH"; unit_cost_ars: string };
 export type ReceiptDraftLine = { order_line_id: string; delivered_quantity: string; accepted_quantity: string;
-  difference_reason: string | null; expected_stock_version: string | null };
+  difference_reason: string | null; expected_stock_version: string | null; lot_id?: string; location_id?: string };
 
 const uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const money = /^(?:0|[1-9][0-9]{0,11})\.[0-9]{2}$/;
@@ -27,7 +28,9 @@ export function validReceiptLine(value: ReceiptDraftLine) {
     && (value.accepted_quantity === value.delivered_quantity ? value.difference_reason === null
       : Boolean(value.difference_reason?.trim()))
     && (value.accepted_quantity === "0" ? value.expected_stock_version === null
-      : value.expected_stock_version === null || validPositiveInteger(value.expected_stock_version));
+      : value.expected_stock_version === null || validPositiveInteger(value.expected_stock_version))
+    && ((!value.lot_id && !value.location_id) ||
+      Boolean(value.lot_id && value.location_id && value.accepted_quantity !== "0"));
 }
 export function procurementFailure(error: unknown) {
   if (error instanceof OperatorError && error.code === "procurement_conflict")
@@ -53,7 +56,13 @@ export const procurement = {
   confirm: (order: Order) => post<{ order: Order }>(`/procurement/orders/${order.id}/confirm`, { expected_version: order.version }),
   receive: (order: Order, operationId: string, lines: ReceiptDraftLine[]) =>
     post<{ order: Order; receipt: Receipt }>(`/procurement/orders/${order.id}/receipts`, {
-      operation_id: operationId, expected_version: order.version, lines,
+      operation_id: operationId, expected_version: order.version, lines: lines.map((line) => ({
+        order_line_id: line.order_line_id, delivered_quantity: line.delivered_quantity,
+        accepted_quantity: line.accepted_quantity, difference_reason: line.difference_reason,
+        expected_stock_version: line.expected_stock_version,
+        ...(line.lot_id && line.location_id ? { allocations: [{ lot_id: line.lot_id,
+          location_id: line.location_id, quantity: line.accepted_quantity }] } : {}),
+      })),
     }),
   receiptByOperation: (operationId: string) =>
     request<{ receipt: Receipt }>(`/procurement/receipts/operations/${operationId}`),

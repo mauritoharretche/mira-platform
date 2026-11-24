@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useOperator } from "@/components/operations-shell";
 import { OperatorError, request, Stock } from "@/lib/operations-api";
+import { Location, Lot, lots } from "@/lib/lot-api";
 import { DraftLine, Order, ReceiptDraftLine, Supplier, VariantReference,
   procurement, procurementFailure, validOrderLine, validReceiptLine } from "@/lib/procurement-api";
 
@@ -30,6 +31,8 @@ export function ProcurementWorkspace() {
   const [variantSearch, setVariantSearch] = useState("");
   const [receiptLines, setReceiptLines] = useState<ReceiptDraftLine[]>([]);
   const [stocks, setStocks] = useState<Record<string, Stock | null>>({});
+  const [lotOptions, setLotOptions] = useState<Record<string, Lot[]>>({});
+  const [locations, setLocations] = useState<Location[]>([]);
   const [receiptOperation, setReceiptOperation] = useState<string | null>(null);
   const [receiptUncertain, setReceiptUncertain] = useState(false);
   const [writeBlocked, setWriteBlocked] = useState(false);
@@ -145,6 +148,14 @@ export function ProcurementWorkspace() {
       setStocks((current) => ({ ...current, [variantId]: result.stock }));
     } catch (failure) { setError(procurementFailure(failure)); }
   }
+  async function inspectLots(variantId: string) {
+    try {
+      const [state, places] = await Promise.all([lots.state(variantId), lots.locations()]);
+      setLotOptions((current) => ({ ...current, [variantId]: state.lots }));
+      setLocations(places.locations);
+      setStatus("Lotes y ubicaciones consultados. La asignación es opcional; sin ella el stock queda sin asignar.");
+    } catch (failure) { setError(procurementFailure(failure)); }
+  }
   async function receive(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!order || !receiptLines.length) return;
@@ -253,6 +264,9 @@ export function ProcurementWorkspace() {
           {order.lines.find((source) => source.id === line.order_line_id)?.variant_sku} · entregado {line.delivered_quantity}, aceptado {line.accepted_quantity} EACH
           {line.difference_reason && <> · diferencia: {line.difference_reason}</>}
           {line.stock_movement_id && <> · movimiento de stock {line.stock_movement_id}</>}
+          {line.allocations === null && <> · asignaciones: sin permiso de lectura</>}
+          {line.allocations?.map((allocation) => <span key={`${allocation.lot_id}-${allocation.location_id}`}>
+            {" · "}lote {allocation.lot_id}, ubicación {allocation.location_id}: {allocation.quantity} EACH</span>)}
         </li>)}</ul></li>)}</ol>
       {(order.status === "CONFIRMED" || order.status === "PARTIAL") && can(capability.receive) && <form onSubmit={(event) => void receive(event)} className="proc-form">
         <h3>Registrar recepción</h3><p className="muted">Ingresá lo entregado y lo aceptado. Si hay diferencias, explicalas sin borrar la historia.</p>
@@ -267,6 +281,17 @@ export function ProcurementWorkspace() {
               onChange={(event) => changeReceiptLine(source.id, { difference_reason: event.target.value || null })} maxLength={255} />
             <p className="caption">Versión de stock: {item.expected_stock_version ?? "sin stock previo"}</p>
             <button type="button" onClick={() => void loadStockVersion(source.variant_id, source.id)}>Consultar versión de stock</button>
+            {can("inventory.read_stock_lots") && can("inventory.allocate_stock_lots") && <>
+              <button type="button" onClick={() => void inspectLots(source.variant_id)}>Consultar lotes y ubicaciones</button>
+              <label htmlFor={`receipt-lot-${source.id}`}>Lote de lo aceptado, si corresponde</label>
+              <select id={`receipt-lot-${source.id}`} value={item.lot_id ?? ""} onChange={(event) => changeReceiptLine(source.id, { lot_id: event.target.value })}>
+                <option value="">Sin asignación de lote</option>{(lotOptions[source.variant_id] ?? []).map((lot) =>
+                  <option key={lot.id} value={lot.id}>{lot.code} · {lot.status}{lot.expired ? " · vencido" : ""}</option>)}</select>
+              <label htmlFor={`receipt-location-${source.id}`}>Ubicación de lo aceptado, si corresponde</label>
+              <select id={`receipt-location-${source.id}`} value={item.location_id ?? ""} onChange={(event) => changeReceiptLine(source.id, { location_id: event.target.value })}>
+                <option value="">Sin asignación de ubicación</option>{locations.map((location) =>
+                  <option key={location.id} value={location.id}>{location.code} · {location.name}</option>)}</select>
+            </>}
           </fieldset>;
         })}
         <button className="button-primary" disabled={busy || writeBlocked}>Registrar recepción</button>

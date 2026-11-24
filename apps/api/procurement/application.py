@@ -16,10 +16,11 @@ from catalog import references as catalog_references
 from identity import application as identity_application
 from identity.contracts import Capability
 from inventory import application as inventory_application
+from inventory import lot_application as inventory_lots
 from inventory.contracts import InventoryUnit, StockConflictError
 
 from .contracts import OrderStatus, ProcurementConflictError, ProcurementNotFoundError, ProcurementValidationError
-from .models import GoodsReceipt, ProcurementEvent, PurchaseOrder, PurchaseOrderLine, ReceiptLine, Supplier
+from .models import GoodsReceipt, ProcurementEvent, PurchaseOrder, PurchaseOrderLine, ReceiptLine, ReceiptAllocation, Supplier
 
 
 _COST = re.compile(r"(?:0|[1-9][0-9]{0,11})\.[0-9]{2}\Z")
@@ -90,7 +91,7 @@ def order_snapshot(order):
             "total_cost_ars": format(sum((line.quantity * line.unit_cost_ars for line in lines), Decimal("0.00")), ".2f")}
 
 
-def receipt_snapshot(receipt):
+def receipt_snapshot(receipt, *, include_allocations=False):
     return {"id": str(receipt.pk), "order_id": str(receipt.order_id),
             "operation_id": str(receipt.operation_id), "actor_id": receipt.actor_id,
             "recorded_at": receipt.recorded_at.isoformat(),
@@ -98,7 +99,10 @@ def receipt_snapshot(receipt):
                        "delivered_quantity": str(line.delivered_quantity),
                        "accepted_quantity": str(line.accepted_quantity),
                        "difference_reason": line.difference_reason,
-                       "stock_movement_id": str(line.stock_movement_id) if line.stock_movement_id else None}
+                       "stock_movement_id": str(line.stock_movement_id) if line.stock_movement_id else None,
+                       "allocations": ([{"lot_id": str(item.lot_id), "location_id": str(item.location_id),
+                                        "quantity": str(item.quantity)} for item in line.allocations.order_by("id")]
+                                       if include_allocations else None)}
                       for line in receipt.lines.order_by("id")]}
 
 
@@ -292,7 +296,7 @@ def _receipt_values(values):
     normalized, seen = [], set()
     for value in values:
         required = {"order_line_id", "delivered_quantity", "accepted_quantity", "difference_reason", "expected_stock_version"}
-        if not isinstance(value, dict) or set(value) != required:
+        if not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"allocations"}:
             raise ProcurementValidationError("invalid receipt line")
         line_id = _uuid(value["order_line_id"])
         if line_id in seen:
@@ -314,7 +318,23 @@ def _receipt_values(values):
             _version(stock_version)
         if accepted == 0 and stock_version is not None:
             raise ProcurementValidationError("no stock version for a rejected line")
-        normalized.append((line_id, delivered, accepted, reason, stock_version))
+        allocations = value.get("allocations")
+        if allocations is not None:
+            if not isinstance(allocations, list) or not 1 <= len(allocations) <= 10 or accepted == 0:
+                raise ProcurementValidationError("invalid physical allocations")
+            seen_allocations, normalized_allocations = set(), []
+            for item in allocations:
+                if not isinstance(item, dict) or set(item) != {"lot_id", "location_id", "quantity"}:
+                    raise ProcurementValidationError("invalid physical allocation")
+                lot_id, location_id, quantity = _uuid(item["lot_id"]), _uuid(item["location_id"]), _count(item["quantity"])
+                if (lot_id, location_id) in seen_allocations:
+                    raise ProcurementValidationError("duplicate physical allocation")
+                seen_allocations.add((lot_id, location_id))
+                normalized_allocations.append((lot_id, location_id, quantity))
+            if sum(item[2] for item in normalized_allocations) != accepted:
+                raise ProcurementValidationError("physical allocations must cover accepted quantity")
+            allocations = sorted(normalized_allocations, key=lambda item: (str(item[0]), str(item[1])))
+        normalized.append((line_id, delivered, accepted, reason, stock_version, allocations))
     return sorted(normalized, key=lambda item: str(item[0]))
 
 
@@ -324,7 +344,9 @@ def receive_order(*, principal, order_id, operation_id, expected_version, lines)
     values = _receipt_values(lines)
     identity = {"order_id": str(order_id), "expected_version": expected_version,
                 "lines": [[str(line_id), delivered, accepted, reason, stock_version]
-                          for line_id, delivered, accepted, reason, stock_version in values]}
+                          + ([ [[str(lot), str(location), quantity] for lot, location, quantity in allocations] ]
+                             if allocations is not None else [])
+                          for line_id, delivered, accepted, reason, stock_version, allocations in values]}
     request_sha = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     try:
         with transaction.atomic(using="default"):
@@ -342,11 +364,11 @@ def receive_order(*, principal, order_id, operation_id, expected_version, lines)
                 raise ProcurementValidationError("order version exhausted")
             available = {line.pk: line for line in order.lines.select_for_update()}
             if any(line_id not in available or delivered > available[line_id].quantity - available[line_id].received_quantity
-                   for line_id, delivered, unused, unused_reason, unused_version in values):
+                   for line_id, delivered, unused, unused_reason, unused_version, unused_allocations in values):
                 raise ProcurementConflictError("receipt exceeds pending order quantity")
             receipt = GoodsReceipt.objects.using("default").create(
                 order=order, operation_id=operation_id, request_sha256=request_sha, actor_id=actor.actor_id)
-            for line_id, delivered, accepted, reason, stock_version in values:
+            for line_id, delivered, accepted, reason, stock_version, allocations in values:
                 line = available[line_id]
                 movement_id = None
                 if accepted:
@@ -354,9 +376,18 @@ def receive_order(*, principal, order_id, operation_id, expected_version, lines)
                         principal=principal, variant_id=line.variant_id, unit=InventoryUnit.EACH,
                         quantity=accepted, expected_version=stock_version)
                     movement_id = result.movement_id
-                ReceiptLine.objects.using("default").create(
+                    if allocations is not None:
+                        inventory_lots.allocate_purchase_receipt(
+                            principal=principal, variant_id=line.variant_id, movement_id=movement_id,
+                            allocations=[{"lot_id": lot_id, "location_id": location_id, "quantity": quantity}
+                                         for lot_id, location_id, quantity in allocations])
+                receipt_line = ReceiptLine.objects.using("default").create(
                     receipt=receipt, order_line=line, delivered_quantity=delivered,
                     accepted_quantity=accepted, difference_reason=reason, stock_movement_id=movement_id)
+                if allocations is not None:
+                    ReceiptAllocation.objects.using("default").bulk_create([
+                        ReceiptAllocation(receipt_line=receipt_line, lot_id=lot_id, location_id=location_id,
+                                          quantity=quantity) for lot_id, location_id, quantity in allocations])
                 line.received_quantity += accepted
                 line.save(using="default", update_fields=["received_quantity"])
             order.status = (OrderStatus.COMPLETE.value if all(line.received_quantity == line.quantity for line in available.values())

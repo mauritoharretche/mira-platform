@@ -11,6 +11,8 @@ const endpoints = [
   "inventory/variants/:variantId/initial-receipt",
   "inventory/variants/:variantId/adjustments",
   "inventory/variants/:variantId/stock", "inventory/variants/:variantId/movements",
+  "inventory/locations", "inventory/variants/:variantId/lots",
+  "inventory/lots/:lotId/status", "inventory/lots/:lotId/transfer", "inventory/lots/:lotId/correction",
   "procurement/suppliers", "procurement/suppliers/:supplierId",
   "procurement/orders", "procurement/orders/:orderId",
   "procurement/orders/:orderId/confirm", "procurement/orders/:orderId/receipts",

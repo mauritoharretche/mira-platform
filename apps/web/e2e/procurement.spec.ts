@@ -7,6 +7,24 @@ test("procurement-journey", async ({ page }, info) => {
   await page.getByLabel("Contraseña", { exact: true }).fill(process.env.MIRA_E2E_PASSWORD!);
   await page.getByLabel("Contraseña", { exact: true }).press("Enter");
   await expect(page).toHaveURL(/\/operations\/catalog$/);
+  await page.getByRole("navigation").getByRole("link", { name: "Lotes" }).click();
+  await expect(page.getByRole("heading", { name: "Inventario por lotes" })).toBeVisible();
+  const first = `PROC-FIXTURE-${project}-A`;
+  const second = `PROC-FIXTURE-${project}-B`;
+  const placeCode = `FIC-${project.toUpperCase()}-SHELF`;
+  const lotCode = `FIC-${project.toUpperCase()}-LOT-A`;
+  await page.getByLabel("Código de ubicación").fill(placeCode);
+  await page.getByLabel("Nombre de ubicación").fill(`Fictional ${project} receiving shelf`);
+  await page.getByRole("button", { name: "Crear ubicación" }).click();
+  await expect(page.getByRole("status")).toContainText("Ubicación registrada");
+  await page.getByLabel("Buscar variante por nombre o SKU").fill(first);
+  await page.getByRole("button", { name: "Buscar variantes" }).click();
+  await page.getByLabel("Variante seleccionada").selectOption({ label: `Fictional ${project} purchase · Fictional pack A · SKU ${first}` });
+  await expect(page.getByText("0 EACH sin asignación", { exact: false })).toBeVisible();
+  await page.getByLabel("Código de lote").fill(lotCode);
+  await page.getByLabel("Vencimiento, si corresponde").fill("2099-12-31");
+  await page.getByRole("button", { name: "Crear lote" }).click();
+  await expect(page.getByRole("status")).toContainText("Lote registrado");
   await page.getByRole("navigation").getByRole("link", { name: "Compras" }).click();
   await expect(page.getByRole("heading", { name: "Compras y abastecimiento" })).toBeVisible();
 
@@ -16,8 +34,6 @@ test("procurement-journey", async ({ page }, info) => {
   await page.getByLabel("Proveedor activo").selectOption({ label: `Fictional ${project} Supply Co` });
   await page.getByLabel("Buscar variante por nombre o SKU").fill(`PROC-FIXTURE-${project}`);
   await page.getByRole("button", { name: "Buscar variantes" }).click();
-  const first = `PROC-FIXTURE-${project}-A`;
-  const second = `PROC-FIXTURE-${project}-B`;
   await page.getByLabel("Variante", { exact: true }).selectOption({ label: `Fictional ${project} purchase · Fictional pack A · ${first}` });
   await page.getByLabel("Cantidad EACH", { exact: true }).fill("5");
   await page.getByLabel("Costo unitario ARS", { exact: true }).fill("12.30");
@@ -38,6 +54,9 @@ test("procurement-journey", async ({ page }, info) => {
   await receiptGroup(first).getByLabel("Cantidad aceptada EACH").fill("2");
   await receiptGroup(second).getByLabel("Cantidad entregada EACH").fill("1");
   await receiptGroup(second).getByLabel("Cantidad aceptada EACH").fill("1");
+  await receiptGroup(first).getByRole("button", { name: "Consultar lotes y ubicaciones" }).click();
+  await receiptGroup(first).getByLabel("Lote de lo aceptado, si corresponde").selectOption({ label: `${lotCode} · ACTIVE` });
+  await receiptGroup(first).getByLabel("Ubicación de lo aceptado, si corresponde").selectOption({ label: `${placeCode} · Fictional ${project} receiving shelf` });
   await page.getByRole("button", { name: "Registrar recepción" }).click();
   await expect(page.getByRole("status")).toContainText("Recepción registrada");
   await expect(page.locator(".badge")).toHaveText("PARTIAL");
@@ -51,6 +70,9 @@ test("procurement-journey", async ({ page }, info) => {
   await receiptGroup(first).getByLabel("Cantidad aceptada EACH").fill("3");
   await receiptGroup(second).getByLabel("Cantidad entregada EACH").fill("3");
   await receiptGroup(second).getByLabel("Cantidad aceptada EACH").fill("3");
+  await receiptGroup(first).getByRole("button", { name: "Consultar lotes y ubicaciones" }).click();
+  await receiptGroup(first).getByLabel("Lote de lo aceptado, si corresponde").selectOption({ label: `${lotCode} · ACTIVE` });
+  await receiptGroup(first).getByLabel("Ubicación de lo aceptado, si corresponde").selectOption({ label: `${placeCode} · Fictional ${project} receiving shelf` });
   await page.getByRole("button", { name: "Registrar recepción" }).click();
   await expect(page.getByRole("status")).toContainText("Recepción registrada");
   await expect(page.locator(".badge")).toHaveText("COMPLETE");
@@ -61,5 +83,11 @@ test("procurement-journey", async ({ page }, info) => {
   await expect(page.getByText("5 EACH", { exact: true })).toBeVisible();
   await expect(page.getByText("4 EACH", { exact: true })).toBeVisible();
   await expect(page.getByText(/movimiento de stock/)).toHaveCount(4);
+  await page.getByRole("navigation").getByRole("link", { name: "Lotes" }).click();
+  await page.getByLabel("Buscar variante por nombre o SKU").fill(first);
+  await page.getByRole("button", { name: "Buscar variantes" }).click();
+  await page.getByLabel("Variante seleccionada").selectOption({ label: `Fictional ${project} purchase · Fictional pack A · SKU ${first}` });
+  await expect(page.getByText("0 EACH sin asignación", { exact: false })).toBeVisible();
+  await expect(page.getByRole("row").filter({ hasText: lotCode })).toContainText("5");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });

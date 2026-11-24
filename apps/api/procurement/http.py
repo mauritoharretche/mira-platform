@@ -8,7 +8,7 @@ from rest_framework import serializers
 from rest_framework.response import Response
 
 from identity.application import require_capability
-from identity.contracts import Capability
+from identity.contracts import Capability, AccessDenied, AuthenticationRequired
 from inventory.contracts import InventoryValidationError, InventoryVariantNotFoundError
 from system.http import OperatorAPIView, StrictSerializer, StrictTextField, error_response
 
@@ -100,12 +100,22 @@ class ConfirmInput(StrictSerializer):
         return _positive(value)
 
 
+class ReceiptAllocationInput(StrictSerializer):
+    lot_id = serializers.UUIDField()
+    location_id = serializers.UUIDField()
+    quantity = StrictTextField(max_length=19, trim_whitespace=False)
+
+    def validate_quantity(self, value):
+        return _positive(value)
+
+
 class ReceiptLineInput(StrictSerializer):
     order_line_id = serializers.UUIDField()
     delivered_quantity = StrictTextField(max_length=19, trim_whitespace=False)
     accepted_quantity = StrictTextField(max_length=19, trim_whitespace=False)
     difference_reason = StrictTextField(max_length=255, allow_null=True, trim_whitespace=False)
     expected_stock_version = StrictTextField(max_length=19, allow_null=True, trim_whitespace=False)
+    allocations = ReceiptAllocationInput(many=True, required=False, allow_empty=False)
 
     def validate_delivered_quantity(self, value):
         return _positive(value)
@@ -139,13 +149,22 @@ def _respond(call):
         return error_response("not_found", 404)
 
 
-def _order_detail(order):
+def _can_read_lots(request):
+    try:
+        require_capability(principal=request.user, capability=Capability.READ_STOCK_LOTS)
+        return True
+    except (AccessDenied, AuthenticationRequired):
+        return False
+
+
+def _order_detail(order, *, include_allocations=False):
     payload = application.order_snapshot(order)
     payload["history"] = [{"action": event.action, "version": str(event.version),
                            "actor_id": event.actor_id, "occurred_at": event.occurred_at.isoformat(),
                            "snapshot": event.snapshot, "receipt_id": str(event.receipt_id) if event.receipt_id else None}
                           for event in order.events.order_by("version")]
-    payload["receipts"] = [application.receipt_snapshot(receipt) for receipt in order.receipts.order_by("recorded_at", "id")]
+    payload["receipts"] = [application.receipt_snapshot(receipt, include_allocations=include_allocations)
+                           for receipt in order.receipts.order_by("recorded_at", "id")]
     return payload
 
 
@@ -207,7 +226,7 @@ class OrdersView(OperatorAPIView):
         order = _respond(lambda: application.create_order(principal=request.user, **serializer.validated_data))
         if hasattr(order, "status_code"):
             return order
-        return Response({"order": _order_detail(order)}, status=201)
+        return Response({"order": _order_detail(order, include_allocations=_can_read_lots(request))}, status=201)
 
 
 class OrderView(OperatorAPIView):
@@ -216,7 +235,7 @@ class OrderView(OperatorAPIView):
         order = _respond(lambda: application.get_order(principal=request.user, order_id=_uuid(order_id)))
         if hasattr(order, "status_code"):
             return order
-        return Response({"order": _order_detail(order)})
+        return Response({"order": _order_detail(order, include_allocations=_can_read_lots(request))})
 
     def post(self, request, order_id):
         require_capability(principal=request.user, capability=Capability.EDIT_PURCHASE_ORDER)
@@ -227,7 +246,7 @@ class OrderView(OperatorAPIView):
                                                            **serializer.validated_data))
         if hasattr(order, "status_code"):
             return order
-        return Response({"order": _order_detail(order)})
+        return Response({"order": _order_detail(order, include_allocations=_can_read_lots(request))})
 
 
 class ConfirmOrderView(OperatorAPIView):
@@ -242,7 +261,7 @@ class ConfirmOrderView(OperatorAPIView):
                                                             **serializer.validated_data))
         if hasattr(order, "status_code"):
             return order
-        return Response({"order": _order_detail(order)})
+        return Response({"order": _order_detail(order, include_allocations=_can_read_lots(request))})
 
 
 class ReceiveOrderView(OperatorAPIView):
@@ -258,7 +277,9 @@ class ReceiveOrderView(OperatorAPIView):
         if hasattr(result, "status_code"):
             return result
         order, receipt = result
-        return Response({"order": _order_detail(order), "receipt": application.receipt_snapshot(receipt)}, status=201)
+        include_allocations = _can_read_lots(request)
+        return Response({"order": _order_detail(order, include_allocations=include_allocations),
+                         "receipt": application.receipt_snapshot(receipt, include_allocations=include_allocations)}, status=201)
 
 
 class ReceiptOperationView(OperatorAPIView):
@@ -270,4 +291,4 @@ class ReceiptOperationView(OperatorAPIView):
                                                                          operation_id=_uuid(operation_id)))
         if hasattr(receipt, "status_code"):
             return receipt
-        return Response({"receipt": application.receipt_snapshot(receipt)})
+        return Response({"receipt": application.receipt_snapshot(receipt, include_allocations=_can_read_lots(request))})

@@ -103,6 +103,22 @@ class ReceiptLine(models.Model):
         ]
 
 
+class ReceiptAllocation(models.Model):
+    """Immutable physical provenance for one accepted receipt line."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    receipt_line = models.ForeignKey(ReceiptLine, on_delete=models.PROTECT, related_name="allocations")
+    lot_id = models.UUIDField()
+    location_id = models.UUIDField()
+    quantity = models.PositiveBigIntegerField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["receipt_line", "lot_id", "location_id"], name="proc_receipt_allocation_unique"),
+            models.CheckConstraint(condition=models.Q(quantity__gt=0), name="proc_receipt_allocation_positive"),
+        ]
+
+
 class ProcurementEvent(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, null=True, related_name="events")

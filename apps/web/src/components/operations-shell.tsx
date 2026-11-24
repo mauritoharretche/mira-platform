@@ -59,6 +59,7 @@ export function OperationsShell({ children }: { children: React.ReactNode }) {
               <Link href="/operations/catalog" aria-current={pathname === "/operations/catalog" ? "page" : pathname.startsWith("/operations/products/") ? "location" : undefined}>Catálogo</Link>
               <Link href="/operations" aria-current={pathname === "/operations" ? "page" : undefined}>Nuevo producto</Link>
               <Link href="/operations/procurement" aria-current={pathname.startsWith("/operations/procurement") ? "page" : undefined}>Compras</Link>
+              <Link href="/operations/inventory" aria-current={pathname.startsWith("/operations/inventory") ? "page" : undefined}>Lotes</Link>
             </nav>
           </div>
           <div className="operator-header-actions">
