@@ -103,7 +103,8 @@ class LocationsView(OperatorAPIView):
             raise serializers.ValidationError("Unexpected query parameters")
         locations = lot_application.list_locations(principal=request.user)
         return Response({"locations": [{"id": str(item.pk), "code": item.code, "name": item.name,
-                                         "active": item.active} for item in locations[:100]],
+                                         "active": item.active, "commercial_eligible": item.commercial_eligible,
+                                         "version": str(item.version)} for item in locations[:100]],
                          "truncated": len(locations) > 100})
 
     def post(self, request):

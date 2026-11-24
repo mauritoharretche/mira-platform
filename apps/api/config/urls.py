@@ -4,6 +4,9 @@ from catalog.http import ProductVariantsView, CategoriesView, ProductActiveView,
 from identity.http import OperatorLoginView, csrf_token, session_logout, session_status
 from inventory.http import AdjustmentView, InitialReceiptView, MovementsView, StockView
 from inventory.lot_http import LocationsView, LotsView, LotStatusView, LotTransferView, LotCorrectionView
+from inventory.reservation_http import (AvailabilityView, ReservationsView, ReservationView,
+    ReleaseReservationView, ExpireReservationView, ConsumeReservationView, InventoryOperationView,
+    ClassificationView, LocationEligibilityView)
 from procurement.http import (ConfirmOrderView, OrderView, OrdersView, ReceiptOperationView,
                               ReceiveOrderView, SupplierView, SuppliersView)
 
@@ -28,6 +31,15 @@ urlpatterns = [
     path("api/v1/operator/inventory/variants/<str:variant_id>/stock", StockView.as_view(), name="operator-stock"),
     path("api/v1/operator/inventory/variants/<str:variant_id>/movements", MovementsView.as_view(), name="operator-movements"),
     path("api/v1/operator/inventory/locations", LocationsView.as_view(), name="operator-stock-locations"),
+    path("api/v1/operator/inventory/variants/<str:variant_id>/availability", AvailabilityView.as_view(), name="operator-availability"),
+    path("api/v1/operator/inventory/reservations", ReservationsView.as_view(), name="operator-reservations"),
+    path("api/v1/operator/inventory/reservations/<str:reservation_id>", ReservationView.as_view(), name="operator-reservation"),
+    path("api/v1/operator/inventory/reservations/<str:reservation_id>/release", ReleaseReservationView.as_view(), name="operator-release-reservation"),
+    path("api/v1/operator/inventory/reservations/<str:reservation_id>/expire", ExpireReservationView.as_view(), name="operator-expire-reservation"),
+    path("api/v1/operator/inventory/reservations/<str:reservation_id>/consume", ConsumeReservationView.as_view(), name="operator-consume-reservation"),
+    path("api/v1/operator/inventory/operations/<str:operation_id>", InventoryOperationView.as_view(), name="operator-inventory-operation"),
+    path("api/v1/operator/inventory/classifications", ClassificationView.as_view(), name="operator-classification"),
+    path("api/v1/operator/inventory/locations/<str:location_id>/eligibility", LocationEligibilityView.as_view(), name="operator-location-eligibility"),
     path("api/v1/operator/inventory/variants/<str:variant_id>/lots", LotsView.as_view(), name="operator-stock-lots"),
     path("api/v1/operator/inventory/lots/<str:lot_id>/status", LotStatusView.as_view(), name="operator-lot-status"),
     path("api/v1/operator/inventory/lots/<str:lot_id>/transfer", LotTransferView.as_view(), name="operator-lot-transfer"),

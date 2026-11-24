@@ -54,6 +54,7 @@ class StockMovement(models.Model):
             ), name="inventory_movement_equation_valid"),
             models.CheckConstraint(condition=(
                 models.Q(kind=StockMovementKind.RECEIPT.value, delta__gt=0, reason__isnull=True)
+                | models.Q(kind=StockMovementKind.CONSUMPTION.value, delta__lt=0, reason__isnull=True)
                 | (models.Q(kind=StockMovementKind.ADJUSTMENT.value, reason__isnull=False)
                    & GreaterThan(Length(Trim("reason")), 0))
             ), name="inventory_movement_shape_valid"),
@@ -71,10 +72,13 @@ class StockLocation(models.Model):
     code = models.CharField(max_length=40, db_collation="C", unique=True)
     name = models.CharField(max_length=120)
     active = models.BooleanField(default=True)
+    commercial_eligible = models.BooleanField(default=False)
+    version = models.PositiveBigIntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         permissions = [("manage_stock_locations", "Can manage stock locations")]
+        constraints = [models.CheckConstraint(condition=models.Q(version__gt=0), name="inventory_location_version_positive")]
 
 
 class StockLot(models.Model):
@@ -132,3 +136,64 @@ class StockLotEvent(models.Model):
             "location.created", "lot.created", "lot.status", "lot.received",
             "lot.transferred", "lot.corrected",
         ]), name="inventory_lot_event_action_valid")]
+
+
+class StockReservation(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    operation_id = models.UUIDField(unique=True)
+    source = models.CharField(max_length=40, db_collation="C")
+    reference = models.CharField(max_length=120)
+    actor_id = models.CharField(max_length=128)
+    state = models.CharField(max_length=16, default="ACTIVE", db_collation="C")
+    created_at = models.DateTimeField()
+    expires_at = models.DateTimeField(db_index=True)
+
+    class Meta:
+        permissions = [("reserve_stock", "Can reserve physical stock"),
+                       ("release_reservation", "Can release reservations"),
+                       ("expire_reservation", "Can expire reservations"),
+                       ("consume_reservation", "Can consume reservations"),
+                       ("classify_stock", "Can classify verified unallocated stock"),
+                       ("set_location_eligibility", "Can set commercial location eligibility"),
+                       ("read_availability", "Can read commercial availability")]
+        constraints = [models.CheckConstraint(condition=models.Q(state__in=["ACTIVE", "RELEASED", "CONSUMED", "EXPIRED"]), name="inventory_reservation_state_valid"),
+                       models.CheckConstraint(condition=models.Q(expires_at__gt=models.F("created_at")), name="inventory_reservation_expiry_valid")]
+
+
+class ReservationAllocation(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    reservation = models.ForeignKey(StockReservation, on_delete=models.PROTECT, related_name="allocations")
+    balance = models.ForeignKey(StockLotBalance, on_delete=models.PROTECT, related_name="reservations")
+    quantity = models.PositiveBigIntegerField()
+    stock_movement_id = models.UUIDField(null=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["reservation", "balance"], name="inventory_reservation_balance_unique"),
+                       models.CheckConstraint(condition=models.Q(quantity__gt=0, quantity__lte=MAX_STOCK_INTEGER), name="inventory_reservation_quantity_valid")]
+
+
+class InventoryOperation(models.Model):
+    operation_id = models.UUIDField(primary_key=True)
+    action = models.CharField(max_length=32, db_collation="C")
+    request_sha256 = models.CharField(max_length=64, db_collation="C")
+    actor_id = models.CharField(max_length=128)
+    reservation = models.ForeignKey(StockReservation, on_delete=models.PROTECT, null=True, related_name="operations")
+    result = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class ReservationEvent(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    reservation = models.ForeignKey(StockReservation, on_delete=models.PROTECT, null=True, related_name="events")
+    operation_id = models.UUIDField(null=True)
+    action = models.CharField(max_length=32, db_collation="C")
+    actor_id = models.CharField(max_length=128)
+    details = models.JSONField()
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=models.Q(action__in=[
+            "reservation.created", "reservation.allocated", "reservation.released",
+            "reservation.expired", "reservation.consumed", "reservation.invalidated",
+            "stock.classified", "location.eligibility",
+        ]), name="inventory_reservation_event_valid")]

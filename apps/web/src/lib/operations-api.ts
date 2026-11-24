@@ -23,7 +23,7 @@ export function catalogQuery(category: string, after: string | null = null) {
   return `/catalog/products?${query}`;
 }
 export type Stock = { position_id: string; variant_id: string; unit: "EACH"; on_hand: string; version: string; created_at: string; updated_at: string };
-export type Movement = { movement_id: string; sequence: string; kind: "RECEIPT" | "ADJUSTMENT"; unit: "EACH"; quantity_before: string; delta: string; quantity_after: string; reason: string | null; recorded_at: string };
+export type Movement = { movement_id: string; sequence: string; kind: "RECEIPT" | "ADJUSTMENT" | "CONSUMPTION"; unit: "EACH"; quantity_before: string; delta: string; quantity_after: string; reason: string | null; recorded_at: string };
 export type History = { movements: Movement[]; next_cursor: string | null };
 export type Price = { revision_id: string; variant_id: string; sequence: string; amount: string; currency: "ARS"; price_basis: "PER_VARIANT"; recorded_at: string };
 export type PriceHistory = { revisions: Price[]; next_cursor: string | null };

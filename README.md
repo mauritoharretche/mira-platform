@@ -1,8 +1,8 @@
 # MIRA Platform
 
-MIRA Platform is a greenfield software project exploring an integrated digital platform for specialty retail and related customer experiences.
+MIRA Platform is a modular retail management platform under active development.
 
-> **Status:** Engineering foundation. Not production-ready. The initial modular architecture and development stack are accepted; product, integrations and deployment remain subject to review.
+> **Status:** Local operational increments for Catalog, Inventory and Procurement are implemented. Production operation, external integrations, deployment and non-test migrations require separate approval.
 
 ## Repository goals
 
@@ -36,7 +36,7 @@ This repository is public, but **no open-source license has been selected yet**.
 
 ## Development status
 
-The repository currently contains governance and documentation only. Technology selection, architecture, deployment, integrations and production readiness require explicit discovery and human approval.
+The Django/Next.js operator workspace includes products, variants, pricing, measurement declarations, stock adjustments, purchase receipts, lots and physical locations. INV-03 adds commercial availability and transactional reservations for future Orders/POS integration; it does not implement sales. See [commercial inventory](docs/engineering/commercial-inventory.md) and the [decision log](docs/architecture/decision-log.md). Database-backed local verification remains isolated to `test_mira` with fictional data.
 
 ## Maintainers
 

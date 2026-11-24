@@ -97,8 +97,7 @@ class InventoryTransactionTests(TransactionTestCase):
                     nonlocal count
                     if 'INSERT INTO "inventory_stockposition"' in sql:
                         count += 1
-                    if not first and ((initial and 'INSERT INTO "inventory_stockposition"' in sql)
-                                      or (not initial and "FOR UPDATE" in sql)):
+                    if not first and "pg_advisory_xact_lock" in sql:
                         second_requested.set()
                     return execute(sql, params, many, context)
 
@@ -141,7 +140,7 @@ class InventoryTransactionTests(TransactionTestCase):
         self.assertFalse(first.is_alive())
         self.assertFalse(second.is_alive())
         self.assertEqual(outcomes.qsize(), 2)
-        self.assertEqual(inserts, {True: 1, False: 1} if initial else {True: 0, False: 0})
+        self.assertEqual(inserts, {True: 1, False: 1 if fail_first else 0} if initial else {True: 0, False: 0})
         return dict(outcomes.get_nowait() for unused in range(2))
 
     def test_concurrent_initial_receipts_have_one_winner_and_no_business_retries(self):

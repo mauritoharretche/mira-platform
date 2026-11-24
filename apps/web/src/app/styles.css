@@ -321,6 +321,14 @@ th { font-size: .75rem; color: var(--muted); background: var(--surface-inset); }
 .lot-workspace .lot-inline input { flex: 1 1 12rem; min-width: 0; }
 .lot-workspace table { font-variant-numeric: tabular-nums; }
 .lot-workspace td { overflow-wrap: anywhere; }
+.commercial-inventory { min-width: 0; }
+.commercial-inventory .identifier, .commercial-inventory code, .commercial-inventory li { overflow-wrap: anywhere; }
+.commercial-summary { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,10rem),1fr)); gap: .75rem; margin: 1rem 0; }
+.commercial-summary > div { background: var(--surface-inset); padding: .75rem; border-radius: .5rem; }
+.commercial-summary dt { color: var(--muted); font-size: .875rem; }
+.commercial-summary dd { margin: .25rem 0 0; color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; }
+.commercial-inventory article { margin-top: 1rem; }
+.commercial-inventory article button { margin: .25rem; }
 .procurement-workspace .proc-stock-result { display: block; margin-top: .25rem; font-variant-numeric: tabular-nums; }
 @media (max-width: 47.999rem) {
   .operator-header nav { flex-wrap: wrap; }

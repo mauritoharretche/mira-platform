@@ -10,7 +10,21 @@ from .contracts import (CatalogAuditAction, CatalogChangeAuditAction, CatalogMea
                         CatalogPriceAuditAction, InventoryMovementAuditAction, ProcurementAuditAction)
 from .models import (CatalogAuditEntry, CatalogChangeAuditEntry, CatalogMeasurementAuditEntry,
                      CatalogPriceAuditEntry, InventoryMovementAuditEntry, ProcurementAuditEntry,
-                     InventoryLotAuditEntry)
+                     InventoryLotAuditEntry, ReservationAuditEntry)
+
+
+def record_reservation_event(*, actor: ActorContext, event_id: UUID, reservation_id: UUID | None, action: str) -> UUID:
+    if not transaction.get_connection("default").in_atomic_block:
+        raise TransactionManagementError("Audit requires an active transaction")
+    if not isinstance(actor, ActorContext) or not isinstance(actor.actor_id, str) or not actor.actor_id.strip() or len(actor.actor_id) > 128:
+        raise ValueError("Trusted actor required")
+    if not isinstance(event_id, UUID) or (reservation_id is not None and not isinstance(reservation_id, UUID)) or action not in {
+        "reservation.created", "reservation.allocated", "reservation.released", "reservation.expired",
+        "reservation.consumed", "reservation.invalidated", "stock.classified", "location.eligibility",
+    }:
+        raise ValueError("Invalid reservation attribution")
+    return ReservationAuditEntry.objects.using("default").create(
+        actor_id=actor.actor_id, event_id=event_id, reservation_id=reservation_id, action=action).pk
 
 
 def record_inventory_lot_event(*, actor: ActorContext, event_id: UUID, action: str) -> UUID:
@@ -115,6 +129,8 @@ def record_inventory_movement(
         raise ValueError("Inventory quantities do not reconcile")
     if action is InventoryMovementAuditAction.STOCK_RECEIVED and delta <= 0:
         raise ValueError("A receipt must be positive")
+    if action is InventoryMovementAuditAction.STOCK_CONSUMED and delta >= 0:
+        raise ValueError("A consumption must be negative")
     if sequence == 1 and (quantity_before != 0 or action is not InventoryMovementAuditAction.STOCK_RECEIVED):
         raise ValueError("Initial inventory attribution requires a receipt from zero")
     entry = InventoryMovementAuditEntry.objects.using("default").create(

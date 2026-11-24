@@ -14,6 +14,7 @@ class InventoryUnit(Enum):
 class StockMovementKind(Enum):
     RECEIPT = "RECEIPT"
     ADJUSTMENT = "ADJUSTMENT"
+    CONSUMPTION = "CONSUMPTION"
 
 
 class InventoryValidationError(ValueError):
@@ -62,3 +63,38 @@ class StockMovementSnapshot:
 class StockReceiptResult:
     stock: StockSnapshot
     movement_id: UUID
+
+
+@dataclass(frozen=True)
+class ReservationLine:
+    variant_id: UUID
+    quantity: int
+
+
+@dataclass(frozen=True)
+class PhysicalAvailability:
+    balance_id: UUID
+    lot_id: UUID
+    lot_code: str
+    location_id: UUID
+    location_code: str
+    expires_on: str | None
+    physical: int
+    eligible: bool
+    reserved: int
+    available: int
+
+
+@dataclass(frozen=True)
+class AvailabilitySnapshot:
+    variant_id: UUID
+    as_of: datetime
+    physical: int
+    allocated: int
+    unallocated: int
+    eligible: int
+    reserved: int
+    unavailable: int
+    available: int
+    safety_stock: int
+    balances: tuple[PhysicalAvailability, ...]

@@ -5,6 +5,8 @@ import { useOperator } from "./operations-shell";
 import { OperatorError, request, Stock, validPositiveInteger } from "@/lib/operations-api";
 import { procurement, VariantReference } from "@/lib/procurement-api";
 import { Location, Lot, LotState, lots, validSignedQuantity } from "@/lib/lot-api";
+import { CommercialInventoryPanel } from "./commercial-inventory-panel";
+import { reservationApi } from "@/lib/reservation-api";
 
 const cap = {
   read: "inventory.read_stock_lots", location: "inventory.manage_stock_locations",
@@ -39,6 +41,7 @@ export function StockLotWorkspace() {
   const [quantity, setQuantity] = useState("");
   const [reason, setReason] = useState("");
   const [lotStatus, setLotStatus] = useState<Lot["status"]>("ACTIVE");
+  const [eligibilityReason,setEligibilityReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [blockKind, setBlockKind] = useState<"conflict" | "uncertain" | null>(null);
   const [blockedVariantId, setBlockedVariantId] = useState("");
@@ -96,10 +99,11 @@ export function StockLotWorkspace() {
     catch (failure) { setError(failureText(failure)); }
   }
 
-  if (!can(cap.read)) return <section className="panel"><h1>Inventario por lotes</h1><p>Tu cuenta no tiene permiso de lectura de lotes.</p></section>;
+  if (!can(cap.read)) return <div className="lot-workspace"><h1>Inventario</h1><CommercialInventoryPanel /><section className="panel"><h2>Inventario por lotes</h2><p>Tu cuenta no tiene permiso de lectura de lotes.</p></section></div>;
   return <div className="lot-workspace">
     <header className="page-heading"><p className="eyebrow">Inventario · operación piloto</p><h1>Inventario por lotes</h1>
       <p>Saldo físico EACH. La secuencia FEFO orienta la revisión del operador; no indica disponibilidad ni vendibilidad.</p></header>
+    <CommercialInventoryPanel onChanged={async()=>{if(variantId)await refresh();}} />
     {error && <p role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     {blockKind === "uncertain" && <p role="alert">Escrituras pausadas: la operación pudo haberse guardado. Consultá el estado y verificá su trazabilidad antes de volver a escribir. Una lectura no confirma una escritura incierta.</p>}
     {blockKind === "conflict" && <div role="alert"><p>La revisión cambió. Conservamos los campos ingresados. Consultá el estado vigente antes de decidir.</p>
@@ -127,12 +131,17 @@ export function StockLotWorkspace() {
       })}</ol>{!state.fefo.length && <p>No hay lotes elegibles para sugerencia FEFO.</p>}
       {state.truncated && <p role="alert">Listado limitado. Revisá los lotes restantes antes de decidir.</p>}
       <h3>Lotes y ubicaciones</h3><div className="table-wrap"><table><thead><tr><th>Lote</th><th>Estado</th><th>Vence</th><th>EACH</th><th>Ubicaciones</th></tr></thead>
-        <tbody>{state.lots.map((item) => <tr key={item.id}><td>{item.code}</td><td>{item.expired ? "VENCIDO" : item.status}</td>
-          <td>{item.expires_on ?? "No declarado"}</td><td>{item.quantity}</td>
-          <td>{item.locations.map((entry) => `${entry.code}: ${entry.quantity}`).join(" · ") || "Sin asignación"}</td></tr>)}</tbody></table></div>
+        <tbody>{state.lots.map((item) => <tr key={item.id}><td data-label="Lote">{item.code}</td><td data-label="Estado">{item.expired ? "VENCIDO" : item.status}</td>
+          <td data-label="Vence">{item.expires_on ?? "No declarado"}</td><td data-label="EACH">{item.quantity}</td>
+          <td data-label="Ubicaciones">{item.locations.map((entry) => `${entry.code}: ${entry.quantity}`).join(" · ") || "Sin asignación"}</td></tr>)}</tbody></table></div>
     </section>}
 
-    <section className="panel"><h2>Ubicaciones</h2><ul>{locations.map((item) => <li key={item.id}>{item.code} · {item.name}</li>)}</ul>
+    <section className="panel"><h2>Ubicaciones</h2><ul>{locations.map((item) => <li key={item.id}>{item.code} · {item.name}
+      <span> · elegibilidad comercial: {item.commercial_eligible ? "habilitada" : "no habilitada"}</span>
+      {can("inventory.set_location_eligibility")&&<button type="button" disabled={busy||blocked||!eligibilityReason.trim()}
+        onClick={()=>void write(()=>reservationApi.eligibility(item.id,!item.commercial_eligible,item.version,eligibilityReason),"Elegibilidad de ubicación registrada.")}>{item.commercial_eligible?"Deshabilitar":"Habilitar"} elegibilidad de {item.code}</button>}
+    </li>)}</ul>
+      {can("inventory.set_location_eligibility")&&<><label htmlFor="eligibility-reason">Motivo de elegibilidad de ubicación</label><input id="eligibility-reason" value={eligibilityReason} maxLength={255} onChange={(event)=>setEligibilityReason(event.target.value)}/></>}
       {can(cap.location) && <form onSubmit={(event) => { event.preventDefault(); void write(() => lots.createLocation(code, name), "Ubicación registrada."); }}>
         <label htmlFor="location-code">Código de ubicación</label><input id="location-code" value={code} maxLength={40} onChange={(event) => setCode(event.target.value)} required />
         <label htmlFor="location-name">Nombre de ubicación</label><input id="location-name" value={name} maxLength={120} onChange={(event) => setName(event.target.value)} required />

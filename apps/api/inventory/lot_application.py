@@ -19,6 +19,7 @@ from identity.contracts import Capability
 from .application import adjust_stock, _quantity
 from .contracts import InventoryValidationError, InventoryVariantNotFoundError, StockConflictError, StockNotInitializedError
 from .models import StockLocation, StockLot, StockLotBalance, StockLotEvent, StockMovement, StockPosition
+from .locking import inventory_transaction, lock_inventory
 
 
 def _uuid(value):
@@ -77,6 +78,7 @@ def allocated_total(variant_id):
             .aggregate(total=Sum("quantity"))["total"] or 0)
 
 
+@inventory_transaction
 def create_location(*, principal, code, name):
     actor = identity_application.require_capability(principal=principal, capability=Capability.MANAGE_STOCK_LOCATIONS)
     code, name = _text(code, 40).upper(), _text(name, 120)
@@ -92,6 +94,7 @@ def create_location(*, principal, code, name):
         raise
 
 
+@inventory_transaction
 def create_lot(*, principal, variant_id, code, expires_on):
     actor = identity_application.require_capability(principal=principal, capability=Capability.MANAGE_STOCK_LOTS)
     _uuid(variant_id)
@@ -111,6 +114,7 @@ def create_lot(*, principal, variant_id, code, expires_on):
         raise
 
 
+@inventory_transaction
 def set_lot_status(*, principal, lot_id, status, expected_version, reason):
     actor = identity_application.require_capability(principal=principal, capability=Capability.MANAGE_STOCK_LOTS)
     if status not in ("ACTIVE", "BLOCKED", "QUARANTINE"):
@@ -125,6 +129,9 @@ def set_lot_status(*, principal, lot_id, status, expected_version, reason):
         if lot.status != status:
             if lot.version == 2**63 - 1:
                 raise InventoryValidationError("Lot version exhausted")
+            if status != "ACTIVE":
+                from .reservations import _invalidate_allocations
+                _invalidate_allocations(actor=actor, lot_id=lot.pk)
             lot.status = status
             lot.version += 1
             lot.save(using="default", update_fields=["status", "version"])
@@ -141,6 +148,7 @@ def allocate_purchase_receipt(*, principal, variant_id, movement_id, allocations
     actor = identity_application.require_capability(principal=principal, capability=Capability.ALLOCATE_STOCK_LOTS)
     if not transaction.get_connection("default").in_atomic_block:
         raise RuntimeError("Allocation requires Procurement transaction")
+    lock_inventory()
     movement = StockMovement.objects.using("default").select_related("position").get(pk=_uuid(movement_id))
     if movement.position.variant_id != _uuid(variant_id) or movement.kind != "RECEIPT":
         raise InventoryValidationError("Receipt movement mismatch")
@@ -172,6 +180,7 @@ def allocate_purchase_receipt(*, principal, variant_id, movement_id, allocations
     return tuple((lot.pk, location.pk, quantity) for lot, location, quantity in normalized)
 
 
+@inventory_transaction
 def transfer_lot(*, principal, lot_id, source_id, destination_id, quantity, expected_version, reason):
     actor = identity_application.require_capability(principal=principal, capability=Capability.TRANSFER_STOCK_LOTS)
     quantity = _quantity(quantity, positive=True)
@@ -188,6 +197,9 @@ def transfer_lot(*, principal, lot_id, source_id, destination_id, quantity, expe
         prior = _balance(lot, source)
         if prior is None or prior.quantity < quantity:
             raise StockConflictError("Insufficient lot quantity at source")
+        from .reservations import _reserved
+        if prior.quantity - quantity < _reserved(prior.pk, timezone.now()):
+            raise StockConflictError("Transfer would move reserved stock")
         target = _balance(lot, destination, create=True)
         prior.quantity -= quantity
         target.quantity = _quantity(target.quantity + quantity)
@@ -200,6 +212,7 @@ def transfer_lot(*, principal, lot_id, source_id, destination_id, quantity, expe
     return lot
 
 
+@inventory_transaction
 def correct_lot(*, principal, lot_id, location_id, delta, expected_lot_version, expected_stock_version, reason):
     actor = identity_application.require_capability(principal=principal, capability=Capability.CORRECT_STOCK_LOTS)
     if type(delta) is not int or delta == 0 or abs(delta) > 2**63 - 1:
@@ -222,6 +235,9 @@ def correct_lot(*, principal, lot_id, location_id, delta, expected_lot_version, 
         balance = _balance(lot, location, create=delta > 0)
         if balance is None or balance.quantity + delta < 0:
             raise StockConflictError("Insufficient lot quantity")
+        from .reservations import _reserved
+        if balance.quantity + delta < _reserved(balance.pk, timezone.now()):
+            raise StockConflictError("Correction would remove reserved stock")
         new_stock = position.on_hand + delta
         _quantity(new_stock)
         if delta < 0:
@@ -245,6 +261,7 @@ def list_locations(*, principal):
     return tuple(StockLocation.objects.using("default").order_by("code")[:101])
 
 
+@inventory_transaction
 def list_lots(*, principal, variant_id):
     identity_application.require_capability(principal=principal, capability=Capability.READ_STOCK_LOTS)
     _uuid(variant_id)

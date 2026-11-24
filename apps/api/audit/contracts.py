@@ -23,6 +23,7 @@ class CatalogMeasurementAuditAction(Enum):
 class InventoryMovementAuditAction(Enum):
     STOCK_RECEIVED = "inventory.stock_received"
     STOCK_ADJUSTED = "inventory.stock_adjusted"
+    STOCK_CONSUMED = "inventory.stock_consumed"
 
 
 class ProcurementAuditAction(Enum):

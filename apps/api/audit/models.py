@@ -249,6 +249,7 @@ class InventoryMovementAuditEntry(models.Model):
             ), name="audit_inventory_equation_valid"),
             models.CheckConstraint(condition=(
                 models.Q(action=InventoryMovementAuditAction.STOCK_RECEIVED.value, delta__gt=0)
+                | models.Q(action=InventoryMovementAuditAction.STOCK_CONSUMED.value, delta__lt=0)
                 | models.Q(action=InventoryMovementAuditAction.STOCK_ADJUSTED.value)
             ), name="audit_inventory_action_valid"),
             models.CheckConstraint(condition=(
@@ -298,3 +299,19 @@ class InventoryLotAuditEntry(models.Model):
                 "lot.transferred", "lot.corrected",
             ]), name="audit_lot_action_valid"),
         ]
+
+
+class ReservationAuditEntry(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    event_id = models.UUIDField(unique=True)
+    reservation_id = models.UUIDField(null=True)
+    actor_id = models.CharField(max_length=128)
+    action = models.CharField(max_length=32, db_collation="C")
+    occurred_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=models.Q(action__in=[
+            "reservation.created", "reservation.allocated", "reservation.released", "reservation.expired",
+            "reservation.consumed", "reservation.invalidated", "stock.classified", "location.eligibility",
+        ]), name="audit_reservation_action_valid"),
+            models.CheckConstraint(condition=GreaterThan(Length(Trim("actor_id")), 0), name="audit_reservation_actor_valid")]
