@@ -20,7 +20,7 @@ class StockPosition(models.Model):
         permissions = [("receive_stock", "Can receive stock"), ("adjust_stock", "Can adjust stock")]
         constraints = [
             models.UniqueConstraint(fields=["variant"], name="inventory_position_variant_unique"),
-            models.CheckConstraint(condition=models.Q(accounting_unit=InventoryUnit.EACH.value), name="inventory_position_unit_valid"),
+            models.CheckConstraint(condition=models.Q(accounting_unit__in=["EACH", "G"]), name="inventory_position_unit_valid"),
             models.CheckConstraint(condition=models.Q(on_hand__gte=0, on_hand__lte=MAX_STOCK_INTEGER), name="inventory_position_quantity_valid"),
             models.CheckConstraint(condition=models.Q(version__gt=0, version__lte=MAX_STOCK_INTEGER), name="inventory_position_version_valid"),
         ]
@@ -42,7 +42,7 @@ class StockMovement(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["position", "sequence"], name="inventory_movement_sequence_unique"),
             models.CheckConstraint(condition=models.Q(sequence__gt=0, sequence__lte=MAX_STOCK_INTEGER), name="inventory_movement_sequence_valid"),
-            models.CheckConstraint(condition=models.Q(unit=InventoryUnit.EACH.value), name="inventory_movement_unit_valid"),
+            models.CheckConstraint(condition=models.Q(unit__in=["EACH", "G"]), name="inventory_movement_unit_valid"),
             models.CheckConstraint(condition=models.Q(quantity_before__gte=0, quantity_before__lte=MAX_STOCK_INTEGER, quantity_after__gte=0, quantity_after__lte=MAX_STOCK_INTEGER), name="inventory_movement_quantities_valid"),
             models.CheckConstraint(condition=models.Q(delta__gte=-MAX_STOCK_INTEGER, delta__lte=MAX_STOCK_INTEGER) & ~models.Q(delta=0), name="inventory_movement_delta_valid"),
             # Cast only CHECK arithmetic: even malformed signed bigint operands
@@ -55,7 +55,7 @@ class StockMovement(models.Model):
             models.CheckConstraint(condition=(
                 models.Q(kind=StockMovementKind.RECEIPT.value, delta__gt=0, reason__isnull=True)
                 | models.Q(kind=StockMovementKind.CONSUMPTION.value, delta__lt=0, reason__isnull=True)
-                | (models.Q(kind=StockMovementKind.ADJUSTMENT.value, reason__isnull=False)
+                | (models.Q(kind__in=["ADJUSTMENT", "COUNT", "WRITE_OFF"], reason__isnull=False) & (~models.Q(kind="WRITE_OFF") | models.Q(delta__lt=0))
                    & GreaterThan(Length(Trim("reason")), 0))
             ), name="inventory_movement_shape_valid"),
             models.CheckConstraint(condition=(
@@ -197,3 +197,73 @@ class ReservationEvent(models.Model):
             "reservation.expired", "reservation.consumed", "reservation.invalidated",
             "stock.classified", "location.eligibility",
         ]), name="inventory_reservation_event_valid")]
+
+
+class PhysicalCount(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    operation_id = models.UUIDField(unique=True)
+    location = models.ForeignKey(StockLocation, on_delete=models.PROTECT, related_name="counts")
+    responsible_actor_id = models.CharField(max_length=128)
+    blind = models.BooleanField(default=True)
+    state = models.CharField(max_length=16, default="OPEN", db_collation="C")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        permissions = [("read_physical_inventory", "Can read physical count and loss operations"),
+                       ("create_physical_count", "Can open a physical count"),
+                       ("record_physical_count", "Can record observed quantities"),
+                       ("review_physical_count", "Can review count discrepancies"),
+                       ("complete_physical_count", "Can complete physical counts"),
+                       ("write_off_stock", "Can record physical losses")]
+        constraints = [models.CheckConstraint(condition=models.Q(state__in=["OPEN", "REVIEWED", "COMPLETED"]), name="inventory_count_state_valid")]
+
+
+class PhysicalCountLine(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    count = models.ForeignKey(PhysicalCount, on_delete=models.PROTECT, related_name="lines")
+    balance = models.ForeignKey(StockLotBalance, on_delete=models.PROTECT, related_name="counts")
+    unit = models.CharField(max_length=8, db_collation="C")
+    expected_quantity = models.PositiveBigIntegerField()
+    expected_stock_version = models.PositiveBigIntegerField()
+    expected_lot_version = models.PositiveBigIntegerField()
+    observed_quantity = models.PositiveBigIntegerField(null=True)
+    reason = models.CharField(max_length=255, null=True)
+    evidence = models.CharField(max_length=255, null=True)
+    stock_movement_id = models.UUIDField(null=True, unique=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["count", "balance"], name="inventory_count_balance_unique"),
+            models.CheckConstraint(condition=models.Q(unit__in=["EACH", "G"]), name="inventory_count_unit_valid"),
+            models.CheckConstraint(condition=models.Q(expected_quantity__lte=MAX_STOCK_INTEGER), name="inventory_count_expected_valid"),
+            models.CheckConstraint(condition=models.Q(observed_quantity__isnull=True) | models.Q(observed_quantity__lte=MAX_STOCK_INTEGER), name="inventory_count_observed_valid")]
+
+
+class PhysicalLoss(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    operation_id = models.UUIDField(unique=True)
+    balance = models.ForeignKey(StockLotBalance, on_delete=models.PROTECT, related_name="losses")
+    quantity = models.PositiveBigIntegerField()
+    unit = models.CharField(max_length=8, db_collation="C")
+    reason_code = models.CharField(max_length=32, db_collation="C")
+    evidence = models.CharField(max_length=255)
+    actor_id = models.CharField(max_length=128)
+    stock_movement_id = models.UUIDField(unique=True)
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=models.Q(quantity__gt=0, quantity__lte=MAX_STOCK_INTEGER), name="inventory_loss_quantity_valid"),
+            models.CheckConstraint(condition=models.Q(unit__in=["EACH", "G"]), name="inventory_loss_unit_valid"),
+            models.CheckConstraint(condition=models.Q(reason_code__in=["EXPIRATION", "DAMAGE", "QUALITY_REJECTION", "MEASUREMENT_DISCREPANCY", "INTERNAL_CONSUMPTION", "OTHER"]), name="inventory_loss_reason_valid")]
+
+
+class PhysicalInventoryEvent(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    count = models.ForeignKey(PhysicalCount, on_delete=models.PROTECT, null=True, related_name="events")
+    loss_id = models.UUIDField(null=True)
+    action = models.CharField(max_length=24, db_collation="C")
+    actor_id = models.CharField(max_length=128)
+    details = models.JSONField()
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=models.Q(action__in=["count.created", "count.observed", "count.reviewed", "count.completed", "loss.recorded"]), name="inventory_physical_event_valid")]

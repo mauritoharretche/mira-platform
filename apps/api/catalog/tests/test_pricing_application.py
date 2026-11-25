@@ -229,7 +229,7 @@ class PricingApplicationTests(TestCase):
         arguments = dict(principal=self.principal, variant_id=self.variant.id, amount=Decimal("1"), currency="ARS")
         with self.assertRaises(TypeError):
             set_variant_price(**arguments)
-        for keyword in ("valid_from", "valid_to", "recorded_at", "price_basis", "withdraw"):
+        for keyword in ("valid_from", "valid_to", "recorded_at", "withdraw"):
             with self.subTest(keyword=keyword), self.assertRaises(TypeError):
                 set_variant_price(**arguments, expected_revision_id=None, **{keyword: None})
         self.assertFalse(VariantPriceRevision.objects.exists())

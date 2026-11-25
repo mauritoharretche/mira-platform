@@ -103,6 +103,7 @@ class CatalogPriceAuditEntry(models.Model):
     previous_revision_id = models.UUIDField(null=True, blank=True)
     new_revision_id = models.UUIDField()
     previous_amount = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    previous_price_basis = models.CharField(max_length=16, null=True, blank=True, db_collation="C")
     new_amount = models.DecimalField(max_digits=14, decimal_places=2)
     currency = models.CharField(max_length=3, db_collation="C")
     price_basis = models.CharField(max_length=16, db_collation="C")
@@ -119,7 +120,11 @@ class CatalogPriceAuditEntry(models.Model):
             models.CheckConstraint(condition=models.Q(result="success"), name="audit_price_result_success"),
             models.CheckConstraint(condition=models.Q(currency="ARS"), name="audit_price_currency_ars"),
             models.CheckConstraint(
-                condition=models.Q(price_basis="PER_VARIANT"), name="audit_price_basis_valid",
+                condition=models.Q(price_basis__in=["PER_VARIANT", "PER_KG"]), name="audit_price_basis_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(previous_price_basis__isnull=True) | models.Q(previous_revision_id__isnull=False, previous_price_basis__in=["PER_VARIANT", "PER_KG"]),
+                name="audit_price_previous_basis_valid",
             ),
             models.CheckConstraint(
                 condition=models.Q(new_amount__gt=0, new_amount__lte=Decimal("999999999999.99")),
@@ -137,7 +142,7 @@ class CatalogPriceAuditEntry(models.Model):
                     | (
                         models.Q(previous_revision_id__isnull=False, previous_amount__isnull=False)
                         & ~models.Q(previous_revision_id=models.F("new_revision_id"))
-                        & ~models.Q(previous_amount=models.F("new_amount"))
+                        & (~models.Q(previous_amount=models.F("new_amount")) | (models.Q(previous_price_basis__isnull=False) & ~models.Q(previous_price_basis=models.F("price_basis"))))
                     )
                 ),
                 name="audit_price_shape_valid",
@@ -238,7 +243,7 @@ class InventoryMovementAuditEntry(models.Model):
             models.UniqueConstraint(fields=["movement_id"], name="audit_inventory_movement_unique"),
             models.CheckConstraint(condition=GreaterThan(Length(Trim("actor_id")), 0), name="audit_inventory_actor_nonempty"),
             models.CheckConstraint(condition=models.Q(result="success"), name="audit_inventory_result_success"),
-            models.CheckConstraint(condition=models.Q(unit="EACH"), name="audit_inventory_unit_valid"),
+            models.CheckConstraint(condition=models.Q(unit__in=["EACH", "G"]), name="audit_inventory_unit_valid"),
             models.CheckConstraint(condition=models.Q(sequence__gt=0, sequence__lte=2**63 - 1), name="audit_inventory_sequence_valid"),
             models.CheckConstraint(condition=models.Q(quantity_before__gte=0, quantity_before__lte=2**63 - 1, quantity_after__gte=0, quantity_after__lte=2**63 - 1), name="audit_inventory_quantities_valid"),
             models.CheckConstraint(condition=models.Q(delta__gte=-(2**63 - 1), delta__lte=2**63 - 1) & ~models.Q(delta=0), name="audit_inventory_delta_valid"),
@@ -250,7 +255,8 @@ class InventoryMovementAuditEntry(models.Model):
             models.CheckConstraint(condition=(
                 models.Q(action=InventoryMovementAuditAction.STOCK_RECEIVED.value, delta__gt=0)
                 | models.Q(action=InventoryMovementAuditAction.STOCK_CONSUMED.value, delta__lt=0)
-                | models.Q(action=InventoryMovementAuditAction.STOCK_ADJUSTED.value)
+                | models.Q(action__in=[InventoryMovementAuditAction.STOCK_ADJUSTED.value, InventoryMovementAuditAction.STOCK_COUNTED.value])
+                | models.Q(action=InventoryMovementAuditAction.STOCK_WRITTEN_OFF.value, delta__lt=0)
             ), name="audit_inventory_action_valid"),
             models.CheckConstraint(condition=(
                 models.Q(sequence=1, quantity_before=0, action=InventoryMovementAuditAction.STOCK_RECEIVED.value)
@@ -315,3 +321,17 @@ class ReservationAuditEntry(models.Model):
             "reservation.consumed", "reservation.invalidated", "stock.classified", "location.eligibility",
         ]), name="audit_reservation_action_valid"),
             models.CheckConstraint(condition=GreaterThan(Length(Trim("actor_id")), 0), name="audit_reservation_actor_valid")]
+
+
+class PhysicalInventoryAuditEntry(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    event_id = models.UUIDField(unique=True)
+    count_id = models.UUIDField(null=True)
+    loss_id = models.UUIDField(null=True)
+    action = models.CharField(max_length=24, db_collation="C")
+    actor_id = models.CharField(max_length=128)
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=models.Q(action__in=["count.created", "count.observed", "count.reviewed", "count.completed", "loss.recorded"]), name="audit_physical_action_valid"),
+            models.CheckConstraint(condition=GreaterThan(Length(Trim("actor_id")), 0), name="audit_physical_actor_valid")]

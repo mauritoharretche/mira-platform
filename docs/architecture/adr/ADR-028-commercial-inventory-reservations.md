@@ -1,6 +1,6 @@
 # ADR-028: Commercial EACH inventory and transactional reservations
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-24
 - Human owner: Mauro Harretche
 - Technical owner: MIRA engineering

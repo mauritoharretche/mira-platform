@@ -307,3 +307,7 @@ Movement pagination still bounds only the HTTP response, not the underlying
 database query. This remains a scalability limit for high-volume operational use.
 The operator surface remains disabled by default; browser verification uses only
 the native runner with `current_database() = test_mira`.
+
+## INV-04 compatibility extension
+
+The historical PC-01 and INV-01 sections above describe their original EACH / PER_VARIANT scope. [INV-04](measured-inventory-and-counts.md) explicitly adds G accounting at milligram precision, PER_KG prices and mass purchase costs. Current price writes accept `price_basis` (omission retains PER_VARIANT); no-op equality includes both amount and basis. Existing measurement declarations never convert stock or prices. Existing EACH history and prior ADR decisions retain their original meaning.

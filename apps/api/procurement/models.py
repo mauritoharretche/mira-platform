@@ -55,13 +55,14 @@ class PurchaseOrderLine(models.Model):
     received_quantity = models.PositiveBigIntegerField(default=0)
     unit = models.CharField(max_length=8, default="EACH", db_collation="C")
     unit_cost_ars = models.DecimalField(max_digits=14, decimal_places=2)
+    cost_basis = models.CharField(max_length=16, default="PER_VARIANT", db_collation="C")
 
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["order", "variant_id"], name="proc_order_variant_unique"),
             models.CheckConstraint(condition=models.Q(quantity__gt=0), name="proc_order_quantity_positive"),
             models.CheckConstraint(condition=models.Q(received_quantity__lte=models.F("quantity")), name="proc_order_received_bounded"),
-            models.CheckConstraint(condition=models.Q(unit="EACH"), name="proc_order_unit_each"),
+            models.CheckConstraint(condition=(models.Q(unit="EACH", cost_basis="PER_VARIANT") | models.Q(unit="G", cost_basis="PER_KG")), name="proc_order_unit_each"),
             models.CheckConstraint(condition=models.Q(unit_cost_ars__gte=0), name="proc_order_cost_nonnegative"),
         ]
 

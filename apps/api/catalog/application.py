@@ -323,7 +323,7 @@ def _price_snapshot(revision: VariantPriceRevision) -> PriceSnapshot:
 
 def set_variant_price(
     *, principal: object, variant_id: UUID, amount: Decimal, currency: str,
-    expected_revision_id: UUID | None,
+    expected_revision_id: UUID | None, price_basis: PriceBasis = PriceBasis.PER_VARIANT,
 ) -> PriceSnapshot:
     """Append a revision and audit atomically, rejecting stale expectations first.
 
@@ -336,6 +336,8 @@ def set_variant_price(
         actor = identity_application.require_capability(
             principal=principal, capability=Capability.SET_VARIANT_PRICE
         )
+        if not isinstance(price_basis, PriceBasis):
+            raise CatalogValidationError("Explicit price basis required")
         normalized_amount = _normalize_price_amount(amount)
         if currency != "ARS":
             raise CatalogValidationError("only ARS is supported")
@@ -346,18 +348,19 @@ def set_variant_price(
         current_id = previous.id if previous is not None else None
         if expected_revision_id != current_id:
             raise PriceConflictError("price revision has changed")
-        if previous is not None and normalized_amount == previous.amount:
+        if previous is not None and normalized_amount == previous.amount and price_basis.value == previous.price_basis:
             return _price_snapshot(previous)
 
         revision = VariantPriceRevision.objects.using("default").create(
             variant=variant, sequence=previous.sequence + 1 if previous is not None else 1,
-            amount=normalized_amount, currency="ARS", price_basis=PriceBasis.PER_VARIANT.value,
+            amount=normalized_amount, currency="ARS", price_basis=price_basis.value,
         )
         audit_application.record_variant_price_set(
             actor=actor, variant_id=variant.id,
             previous_revision_id=current_id, new_revision_id=revision.id,
             previous_amount=previous.amount if previous is not None else None,
             new_amount=revision.amount, currency=revision.currency, price_basis=revision.price_basis,
+            previous_price_basis=previous.price_basis if previous else None,
         )
 
     return _price_snapshot(revision)

@@ -1,7 +1,8 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { History, messageFor, Movement, OperatorError, post, Product, request, Stock, validNonnegativeInteger, validPositiveInteger, validStock } from "@/lib/operations-api";
+import { History, messageFor, Movement, OperatorError, post, Product, request, Stock, validPositiveInteger, validStock } from "@/lib/operations-api";
+import { validQuantity, canonicalQuantity } from "@/lib/quantities";
 import { useOperator } from "./operations-shell";
 import type { OperationPermit, StockAdjustmentState } from "./product-workspace";
 
@@ -59,7 +60,7 @@ export function StockPanel({ product, variantId, locked, outcome: currentOutcome
   async function receive(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (locked || busy || !canReceive || currentOutcome !== null) return;
-    if (unit !== "EACH" || !validPositiveInteger(quantity)) { setError("Seleccioná EACH e ingresá una cantidad entera positiva dentro del límite técnico."); return; }
+    if ((unit !== "EACH" && unit !== "G") || !validQuantity(quantity, unit, true)) { setError("Seleccioná EACH o G e ingresá una cantidad exacta positiva dentro del límite técnico."); return; }
     const permit = acquire("stock");
     if (!permit) return;
     setBusy(true); setError(""); setReadError("");
@@ -85,9 +86,9 @@ export function StockPanel({ product, variantId, locked, outcome: currentOutcome
   }
 
   function reviewAdjustment() {
-    if (!validNonnegativeInteger(adjustment.quantity) || !adjustment.reason.trim() || adjustment.reason.trim().length > 255 ||
+    if (!validQuantity(adjustment.quantity, observation?.stock?.unit ?? "EACH") || !adjustment.reason.trim() || adjustment.reason.trim().length > 255 ||
         !validPositiveInteger(adjustment.expectedVersion ?? "")) {
-      setError("Ingresá una cantidad entera no negativa, un motivo y una versión de stock vigente.");
+      setError("Ingresá una cantidad exacta no negativa en la unidad registrada, un motivo y una versión de stock vigente.");
       return;
     }
     setError("");
@@ -98,7 +99,7 @@ export function StockPanel({ product, variantId, locked, outcome: currentOutcome
     event.preventDefault();
     const version = adjustment.expectedVersion;
     if (!reviewing || locked || busy || !canAdjust || adjustment.outcome === "conflict" || adjustment.outcome === "uncertain" ||
-        !validNonnegativeInteger(adjustment.quantity) || !adjustment.reason.trim() || !version || !validPositiveInteger(version)) return;
+        !validQuantity(adjustment.quantity, observation?.stock?.unit ?? "EACH") || !adjustment.reason.trim() || !version || !validPositiveInteger(version)) return;
     const permit = acquire("stock");
     if (!permit) return;
     generation.current += 1; // A GET started before this write cannot overwrite its result.
@@ -106,9 +107,9 @@ export function StockPanel({ product, variantId, locked, outcome: currentOutcome
     try {
       try {
         const result = await post<{ stock: Stock }>(`/inventory/variants/${encodeURIComponent(variantId)}/adjustments`, {
-          new_on_hand: adjustment.quantity, expected_version: version, reason: adjustment.reason.trim(),
+          new_on_hand: adjustment.quantity, unit: observation?.stock?.unit ?? "EACH", expected_version: version, reason: adjustment.reason.trim(),
         });
-        if (!validStock(result?.stock, variantId) || result.stock.on_hand !== adjustment.quantity ||
+        if (!validStock(result?.stock, variantId) || result.stock.on_hand !== canonicalQuantity(adjustment.quantity, result.stock.unit) ||
             (result.stock.version !== version && BigInt(result.stock.version) !== BigInt(version) + 1n)) {
           throw new OperatorError("invalid_response", undefined, true);
         }
@@ -158,17 +159,17 @@ export function StockPanel({ product, variantId, locked, outcome: currentOutcome
         <div><p className="presentation-meta">SKU <strong>{variant?.sku}</strong>{variant?.barcode && <> · Código <strong>{variant.barcode}</strong></>}</p><details className="technical-details"><summary>Identificador de variante</summary><p className="identifier">{variant?.id}</p></details></div>
       </section>
       <div className="workspace-grid stock-grid"><section className="panel" aria-labelledby="stock-title"><p className="eyebrow">Saldo actual</p><h2 id="stock-title">Existencia física</h2>
-        {!canStock ? <p role="alert">Sin permiso para consultar stock.</p> : !current ? <p role="status">{readError ? "Consulta de stock pendiente de actualización." : "Consultando stock…"}</p> : current.stock === null ? <><p className="empty-state">Sin recepción inicial</p><p className="muted">Esta variante aún no tiene una posición de stock.</p></> : <><p className="stock-count">{current.stock?.on_hand} <span>EACH</span></p><p className="caption">Saldo físico; no calcula disponibilidad para venta.</p><details className="technical-details"><summary>Versión de stock</summary><p className="identifier">{current.stock?.version}</p></details></>}
+        {!canStock ? <p role="alert">Sin permiso para consultar stock.</p> : !current ? <p role="status">{readError ? "Consulta de stock pendiente de actualización." : "Consultando stock…"}</p> : current.stock === null ? <><p className="empty-state">Sin recepción inicial</p><p className="muted">Esta variante aún no tiene una posición de stock.</p></> : <><p className="stock-count">{current.stock?.on_hand} <span>{current.stock?.unit}</span></p><p className="caption">Saldo físico; no calcula disponibilidad para venta.</p><details className="technical-details"><summary>Versión de stock</summary><p className="identifier">{current.stock?.version}</p></details></>}
         <button className="button-quiet" disabled={!variantId || busy || locked} onClick={() => { setReadError(""); void load(variantId).catch((failure) => setReadError(messageFor(failure))); }}>Actualizar consulta</button>
       </section><section className="panel" aria-labelledby="receipt-title"><p className="eyebrow">Operación</p><h2 id="receipt-title">Recepción inicial</h2>
         {!canReceive ? <p role="alert">Sin permiso para recibir stock.</p> : !canStock ? <p>Necesitás consultar el estado antes de iniciar una recepción.</p> : currentOutcome ? <p className="muted">{currentOutcome === "confirmed" ? "Esta recepción fue confirmada. Actualizá la consulta si aún no ves el saldo." : "Revisá el estado antes de cualquier nueva operación. Esta pantalla no reenvía la recepción."}</p> : current?.stock === null ? <form onSubmit={(event) => void receive(event)} aria-busy={busy}>
-          <label htmlFor="inventory-unit">Unidad de inventario</label><select id="inventory-unit" value={unit} required onChange={(event) => setUnit(event.target.value)} disabled={busy || locked}><option value="">Seleccioná la unidad</option><option value="EACH">EACH — conteo de esta variante</option></select>
-          <label htmlFor="quantity">Cantidad recibida</label><input id="quantity" value={quantity} onChange={(event) => setQuantity(event.target.value)} inputMode="numeric" maxLength={19} required disabled={busy || locked} />
-          <p className="caption">Conteo entero positivo. La unidad se declara explícitamente.</p><button className="button-primary" disabled={busy || locked}>{busy ? "Registrando…" : "Registrar recepción inicial"}</button>
+          <label htmlFor="inventory-unit">Unidad de inventario</label><select id="inventory-unit" value={unit} required onChange={(event) => setUnit(event.target.value)} disabled={busy || locked}><option value="">Seleccioná la unidad</option><option value="EACH">EACH — conteo de esta variante</option><option value="G">G — masa, precisión 0,001 g</option></select>
+          <label htmlFor="quantity">Cantidad recibida</label><input id="quantity" value={quantity} onChange={(event) => setQuantity(event.target.value)} inputMode={unit === "G" ? "decimal" : "numeric"} maxLength={30} required disabled={busy || locked} />
+          <p className="caption">Cantidad positiva exacta. EACH entero o G con hasta tres decimales; la unidad queda fija desde la primera recepción.</p><button className="button-primary" disabled={busy || locked}>{busy ? "Registrando…" : "Registrar recepción inicial"}</button>
         </form> : <p className="muted">{current?.stock ? "La recepción inicial ya está registrada. Las recepciones posteriores quedan fuera de esta pantalla." : "Esperando la consulta de stock."}</p>}
       </section></div>
       <section className="panel movement-panel" aria-labelledby="adjustment-title"><p className="eyebrow">Recuento</p><h2 id="adjustment-title">Ajustar existencia física</h2>
-        <p className="muted">Registrá el conteo real de esta variante en EACH. Este ajuste no registra ventas ni disponibilidad para vender.</p>
+        <p className="muted">Registrá el conteo real de esta variante en su unidad contable. Este ajuste no registra ventas ni disponibilidad para vender.</p>
         {!canAdjust ? <p>Sin permiso para ajustar stock.</p> : !canStock ? <p>Necesitás permiso de lectura para verificar el saldo antes de ajustar.</p> : current?.stock === null ? <p>Primero debe registrarse la recepción inicial.</p> : <>
           {adjustment.outcome === "conflict" && <>
             <p>Versión del borrador: {adjustment.expectedVersion ?? "sin versión"}. Versión consultada: {current?.stock?.version ?? "pendiente"}.</p>
@@ -186,15 +187,15 @@ export function StockPanel({ product, variantId, locked, outcome: currentOutcome
             }}>Revisé saldo y movimientos; iniciar un ajuste nuevo</button>
           </>}
           {adjustment.outcome !== "conflict" && adjustment.outcome !== "uncertain" && <form onSubmit={(event) => void submitAdjustment(event)} aria-busy={busy}>
-            <label htmlFor="adjustment-quantity">Cantidad física contada (EACH)</label>
-            <input id="adjustment-quantity" value={adjustment.quantity} inputMode="numeric" maxLength={19} required disabled={busy || locked || !current?.stock}
+            <label htmlFor="adjustment-quantity">Cantidad física contada ({current?.stock?.unit ?? "EACH"})</label>
+            <input id="adjustment-quantity" value={adjustment.quantity} inputMode={current?.stock?.unit === "G" ? "decimal" : "numeric"} maxLength={30} required disabled={busy || locked || !current?.stock}
               onChange={(event) => { onAdjustment({ ...adjustment, quantity: event.target.value, expectedVersion: adjustment.expectedVersion ?? current?.stock?.version ?? null, outcome: null }); setReviewing(false); }} />
             <label htmlFor="adjustment-reason">Motivo del ajuste</label>
             <input id="adjustment-reason" value={adjustment.reason} maxLength={255} required disabled={busy || locked || !current?.stock}
               onChange={(event) => { onAdjustment({ ...adjustment, reason: event.target.value, expectedVersion: adjustment.expectedVersion ?? current?.stock?.version ?? null, outcome: null }); setReviewing(false); }} />
             <p className="caption">Versión esperada: {adjustment.expectedVersion ?? current?.stock?.version ?? "pendiente"}. El motivo quedará asociado al movimiento.</p>
             {!reviewing ? <button type="button" className="button-quiet" disabled={busy || locked || !current?.stock} onClick={reviewAdjustment}>Revisar ajuste</button> : <>
-              <p role="status">Vas a registrar {adjustment.quantity} EACH como existencia física para {variant?.sku}, con motivo: {adjustment.reason.trim()}.</p>
+              <p role="status">Vas a registrar {adjustment.quantity} {current?.stock?.unit ?? "EACH"} como existencia física para {variant?.sku}, con motivo: {adjustment.reason.trim()}.</p>
               <button className="button-primary" disabled={busy || locked}>Confirmar ajuste físico</button>
             </>}
           </form>}
@@ -204,7 +205,7 @@ export function StockPanel({ product, variantId, locked, outcome: currentOutcome
         {!canHistory ? <p role="alert">Sin permiso para consultar movimientos.</p> : !current ? <p role="status">{readError ? "Consulta de movimientos pendiente de actualización." : "Consultando movimientos…"}</p> : <>
           {!current.consistent && <p className="notice" role="status">El stock cambió durante la consulta. Actualizá para comparar saldo y movimientos.</p>}
           {!current.history?.movements.length ? <p className="empty-state">Todavía no hay movimientos.</p> : <div className="table-wrap"><table><caption className="visually-hidden">Movimientos en orden de secuencia descendente. Fechas en UTC.</caption><thead><tr><th>Secuencia</th><th>Movimiento</th><th>Antes</th><th>Cambio</th><th>Después</th><th>Fecha UTC</th></tr></thead><tbody>
-            {[...(current.history?.movements ?? []), ...more].map((movement) => <tr key={movement.movement_id}><td data-label="Secuencia">{movement.sequence}</td><td data-label="Movimiento">{movement.kind === "RECEIPT" ? "Recepción" : movement.kind === "CONSUMPTION" ? "Consumo de reserva" : "Ajuste"}</td><td data-label="Antes">{movement.quantity_before}</td><td data-label="Cambio">{movement.delta}</td><td data-label="Después">{movement.quantity_after} EACH</td><td data-label="Fecha UTC">{new Intl.DateTimeFormat("es-AR", { dateStyle: "short", timeStyle: "short", timeZone: "UTC" }).format(new Date(movement.recorded_at))}</td></tr>)}
+            {[...(current.history?.movements ?? []), ...more].map((movement) => <tr key={movement.movement_id}><td data-label="Secuencia">{movement.sequence}</td><td data-label="Movimiento">{movement.kind === "RECEIPT" ? "Recepción" : movement.kind === "CONSUMPTION" ? "Consumo de reserva" : movement.kind === "COUNT" ? "Conteo físico" : movement.kind === "WRITE_OFF" ? "Merma" : "Ajuste"}</td><td data-label="Antes">{movement.quantity_before}</td><td data-label="Cambio">{movement.delta}</td><td data-label="Después">{movement.quantity_after} {movement.unit}</td><td data-label="Fecha UTC">{new Intl.DateTimeFormat("es-AR", { dateStyle: "short", timeStyle: "short", timeZone: "UTC" }).format(new Date(movement.recorded_at))}</td></tr>)}
           </tbody></table></div>}
           {cursor && <button disabled={busy || locked} onClick={() => void nextPage()}>Ver movimientos anteriores</button>}
         </>}

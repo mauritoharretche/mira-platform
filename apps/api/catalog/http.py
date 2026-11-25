@@ -269,6 +269,13 @@ def _price_payload(price):
 
 
 class PriceInput(StrictSerializer):
+    price_basis = StrictTextField(required=False, default="PER_VARIANT")
+
+    def validate_price_basis(self, value):
+        from .contracts import PriceBasis
+        try: return PriceBasis(value)
+        except ValueError: raise serializers.ValidationError("PER_VARIANT or PER_KG required") from None
+
     amount = StrictTextField(max_length=64, trim_whitespace=False)
     currency = StrictTextField(max_length=3, trim_whitespace=False)
     expected_revision_id = StrictTextField(max_length=36, trim_whitespace=False, allow_null=True)

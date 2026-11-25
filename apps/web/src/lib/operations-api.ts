@@ -1,3 +1,4 @@
+import { validQuantity } from "./quantities";
 export const API = "/api/v1/operator";
 export const MAX_INTEGER = "9223372036854775807";
 
@@ -22,10 +23,10 @@ export function catalogQuery(category: string, after: string | null = null) {
   if (after !== null) query.set("after", after);
   return `/catalog/products?${query}`;
 }
-export type Stock = { position_id: string; variant_id: string; unit: "EACH"; on_hand: string; version: string; created_at: string; updated_at: string };
-export type Movement = { movement_id: string; sequence: string; kind: "RECEIPT" | "ADJUSTMENT" | "CONSUMPTION"; unit: "EACH"; quantity_before: string; delta: string; quantity_after: string; reason: string | null; recorded_at: string };
+export type Stock = { position_id: string; variant_id: string; unit: "EACH" | "G"; on_hand: string; version: string; created_at: string; updated_at: string };
+export type Movement = { movement_id: string; sequence: string; kind: "RECEIPT" | "ADJUSTMENT" | "CONSUMPTION" | "COUNT" | "WRITE_OFF"; unit: "EACH" | "G"; quantity_before: string; delta: string; quantity_after: string; reason: string | null; recorded_at: string };
 export type History = { movements: Movement[]; next_cursor: string | null };
-export type Price = { revision_id: string; variant_id: string; sequence: string; amount: string; currency: "ARS"; price_basis: "PER_VARIANT"; recorded_at: string };
+export type Price = { revision_id: string; variant_id: string; sequence: string; amount: string; currency: "ARS"; price_basis: "PER_VARIANT" | "PER_KG"; recorded_at: string };
 export type PriceHistory = { revisions: Price[]; next_cursor: string | null };
 export type MeasurementUnit = "EACH" | "G" | "KG";
 export type MeasurementSpec = { spec_id: string; variant_id: string; version: string;
@@ -59,7 +60,7 @@ export function normalizeMeasurementAmount(value: string): string | null {
   return `${whole}.${fraction.padEnd(6, "0")}`;
 }
 
-function validMeasurementTimestamp(value: unknown): value is string {
+export function validMeasurementTimestamp(value: unknown): value is string {
   if (typeof value !== "string") return false;
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?(Z|[+-](\d{2}):(\d{2}))$/.exec(value);
   if (!match) return false;
@@ -124,8 +125,8 @@ export function validStock(value: unknown, variantId: string): value is Stock {
   if (!value || typeof value !== "object") return false;
   const stock = value as Partial<Stock>;
   return typeof stock.position_id === "string" && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(stock.position_id)
-    && stock.variant_id === variantId && stock.unit === "EACH"
-    && typeof stock.on_hand === "string" && validNonnegativeInteger(stock.on_hand)
+    && stock.variant_id === variantId && (stock.unit === "EACH" || stock.unit === "G")
+    && typeof stock.on_hand === "string" && validQuantity(stock.on_hand, stock.unit as "EACH" | "G")
     && typeof stock.version === "string" && validPositiveInteger(stock.version)
     && validMeasurementTimestamp(stock.created_at) && validMeasurementTimestamp(stock.updated_at);
 }

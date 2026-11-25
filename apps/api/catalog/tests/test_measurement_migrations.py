@@ -38,7 +38,8 @@ class MeasurementMigrationCompatibilityTests(TestCase):
                                 (revision, VariantPriceRevision), (identity, CatalogAuditEntry),
                                 (change, CatalogChangeAuditEntry), (price, CatalogPriceAuditEntry)):
             current = model.objects.get(pk=historic.pk)
-            self.assertEqual({f.name for f in historic._meta.fields}, {f.name for f in current._meta.fields})
+            added = {"previous_price_basis"} if current.__class__.__name__ == "CatalogPriceAuditEntry" else set()
+            self.assertEqual({f.name for f in historic._meta.fields} | added, {f.name for f in current._meta.fields})
             for field in historic._meta.fields:
                 self.assertEqual(getattr(current, field.attname), getattr(historic, field.attname))
         self.assertFalse(VariantMeasurementSpec.objects.exists())

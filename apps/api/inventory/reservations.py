@@ -12,8 +12,9 @@ from catalog import references as catalog_references
 from identity import application as identity_application
 from identity.contracts import Capability
 
-from .contracts import (MAX_STOCK_INTEGER, AvailabilitySnapshot, PhysicalAvailability,
+from .contracts import (MAX_STOCK_INTEGER, InventoryUnit, AvailabilitySnapshot, PhysicalAvailability,
                         InventoryValidationError, InventoryVariantNotFoundError, ReservationLine, StockConflictError)
+from .quantities import format_quantity
 from .locking import inventory_transaction
 from .models import (InventoryOperation, ReservationAllocation, ReservationEvent, StockReservation,
                      StockLocation, StockLot, StockLotBalance, StockPosition)
@@ -109,7 +110,12 @@ def _availability(variant_id, now):
     # Unavailable includes unallocated and the union of ineligibility/reservation;
     # overlapping reasons are never subtracted twice. Safety stock is explicitly zero.
     return AvailabilitySnapshot(variant_id, now, physical, allocated, physical - allocated,
-        eligible, reserved, physical - available, available, 0, tuple(rows))
+        eligible, reserved, physical - available, available, 0, tuple(rows), InventoryUnit(position.accounting_unit) if position else None)
+
+
+def _unit_for_variant(variant_id):
+    position = StockPosition.objects.using("default").filter(variant_id=variant_id).first()
+    return InventoryUnit(position.accounting_unit) if position else InventoryUnit.EACH
 
 
 def _find(reservation_id):
@@ -127,7 +133,8 @@ def _snapshot(reservation, now):
         "allocations": [{"id": str(a.pk), "variant_id": str(a.balance.lot.variant_id),
             "lot_id": str(a.balance.lot_id), "lot_code": a.balance.lot.code,
             "location_id": str(a.balance.location_id), "location_code": a.balance.location.code,
-            "quantity": str(a.quantity), "stock_movement_id": str(a.stock_movement_id) if a.stock_movement_id else None}
+            "quantity": format_quantity(a.quantity, _unit_for_variant(a.balance.lot.variant_id)),
+            "unit": _unit_for_variant(a.balance.lot.variant_id).value, "stock_movement_id": str(a.stock_movement_id) if a.stock_movement_id else None}
             for a in reservation.allocations.select_related("balance__lot", "balance__location").order_by("id")],
         "history": [{"action": e.action, "at": e.recorded_at.isoformat(), "actor_id": e.actor_id}
                     for e in reservation.events.order_by("recorded_at", "id")]}
@@ -181,9 +188,11 @@ def create_reservation(*, principal: object, operation_id: UUID, source: str, re
         raise InventoryValidationError("Duplicate variant")
     for line in normalized:
         _count(line.quantity)
+        if not isinstance(line.unit, InventoryUnit):
+            raise InventoryValidationError("Explicit accounting unit required")
     payload = {"source": source, "reference": reference,
                "expires_at": expires_at.astimezone(datetime_timezone.utc).isoformat(),
-               "lines": [[str(line.variant_id), line.quantity] for line in normalized]}
+               "lines": [[str(line.variant_id), line.quantity] + ([line.unit.value] if line.unit is not InventoryUnit.EACH else []) for line in normalized]}
     digest, prior = _operation(actor, operation_id, "reserve", payload)
     if prior:
         return prior.result
@@ -195,6 +204,8 @@ def create_reservation(*, principal: object, operation_id: UUID, source: str, re
         if not catalog_references.variant_exists(variant_id=line.variant_id):
             raise InventoryVariantNotFoundError("Variant not found")
         snapshot = _availability(line.variant_id, now)
+        if snapshot.unit is not None and snapshot.unit is not line.unit:
+            raise InventoryValidationError("Reservation accounting unit mismatch")
         if snapshot.available < line.quantity:
             raise StockConflictError("Insufficient eligible unreserved stock")
         remaining = line.quantity
@@ -214,7 +225,7 @@ def create_reservation(*, principal: object, operation_id: UUID, source: str, re
         allocation = ReservationAllocation.objects.using("default").create(
             reservation=reservation, balance_id=balance_id, quantity=quantity)
         _event(actor, "reservation.allocated", reservation=reservation, operation_id=operation_id,
-               details={"allocation_id": str(allocation.pk), "balance_id": str(balance_id), "quantity": str(quantity)})
+               details={"allocation_id": str(allocation.pk), "balance_id": str(balance_id), "quantity": format_quantity(quantity,_unit_for_variant(allocation.balance.lot.variant_id)), "unit": _unit_for_variant(allocation.balance.lot.variant_id).value})
     return _save_operation(actor, operation_id, "reserve", digest, _snapshot(reservation, now), reservation)
 
 
@@ -238,7 +249,7 @@ def list_reservations(*, principal: object, variant_id: UUID | None = None) -> t
 @inventory_transaction
 def query_operation(*, principal: object, operation_id: UUID) -> dict:
     _actor(principal, Capability.READ_RESERVATION)
-    operation = InventoryOperation.objects.using("default").filter(pk=_uuid(operation_id)).first()
+    operation = InventoryOperation.objects.using("default").filter(pk=_uuid(operation_id), action__in=["reserve", "release", "expire", "consume", "classify"]).first()
     if operation is None:
         raise InventoryVariantNotFoundError("Operation not found; absence is not proof of failure")
     return {"operation_id": str(operation.pk), "action": operation.action, "result": operation.result}
@@ -336,12 +347,14 @@ def expire_reservations(*, principal: object, limit: int = 100) -> int:
 
 @inventory_transaction
 def classify_stock(*, principal: object, operation_id: UUID, lot_id: UUID, location_id: UUID,
-                   quantity: int, expected_stock_version: int, evidence: str) -> dict:
+                   quantity: int, expected_stock_version: int, evidence: str, unit: InventoryUnit = InventoryUnit.EACH) -> dict:
     actor = _actor(principal, Capability.CLASSIFY_STOCK)
     _uuid(lot_id); _uuid(location_id); _count(quantity); _count(expected_stock_version)
+    if not isinstance(unit,InventoryUnit): raise InventoryValidationError("Explicit accounting unit required")
     evidence = _text(evidence, 255)
     digest, prior = _operation(actor, operation_id, "classify", {"lot_id": str(lot_id),
-        "location_id": str(location_id), "quantity": quantity, "expected_stock_version": expected_stock_version, "evidence": evidence})
+        "location_id": str(location_id), "quantity": quantity, "expected_stock_version": expected_stock_version, "evidence": evidence,
+        **({"unit": unit.value} if isinstance(unit, InventoryUnit) and unit is not InventoryUnit.EACH else {})})
     if prior:
         return prior.result
     lot = StockLot.objects.using("default").filter(pk=lot_id).first()
@@ -350,15 +363,17 @@ def classify_stock(*, principal: object, operation_id: UUID, lot_id: UUID, locat
         raise InventoryVariantNotFoundError("Lot or location not found")
     position = StockPosition.objects.using("default").select_for_update().filter(variant_id=lot.variant_id).first()
     snapshot = _availability(lot.variant_id, timezone.now())
+    if not isinstance(unit, InventoryUnit) or (position and position.accounting_unit != unit.value):
+        raise InventoryValidationError("Classification unit mismatch")
     if position is None or position.version != expected_stock_version or quantity > snapshot.unallocated:
         raise StockConflictError("Verified count exceeds unallocated stock or stock changed")
     balance, unused = StockLotBalance.objects.using("default").get_or_create(lot=lot, location=location, defaults={"quantity": 0})
     balance.quantity += quantity
     balance.save(using="default", update_fields=["quantity"])
     _event(actor, "stock.classified", operation_id=operation_id, details={"lot_id": str(lot.pk),
-        "location_id": str(location.pk), "quantity": str(quantity), "evidence": evidence,
+        "location_id": str(location.pk), "quantity": format_quantity(quantity, unit), "unit": unit.value, "evidence": evidence,
         "stock_version": str(position.version), "provenance": "verified_present_count; historical_origin_not_inferred"})
-    return _save_operation(actor, operation_id, "classify", digest, {"classified": str(quantity), "lot_id": str(lot.pk)})
+    return _save_operation(actor, operation_id, "classify", digest, {"classified": format_quantity(quantity, unit), "unit": unit.value, "lot_id": str(lot.pk)})
 
 
 @inventory_transaction

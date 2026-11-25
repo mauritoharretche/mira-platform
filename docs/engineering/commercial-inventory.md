@@ -16,7 +16,7 @@ Classify existing stock only after verifying current count, lot label and physic
 
 ## HTTP surface
 
-All routes below are under `/api/v1/operator/inventory`. Counts and versions are canonical integer strings; IDs are UUIDs; timestamps require an explicit UTC offset. Every endpoint authorizes before parameter/existence checks.
+All routes below are under `/api/v1/operator/inventory`. EACH quantities and versions are canonical integer strings; INV-04 adds explicit G quantities under [the measured contract](measured-inventory-and-counts.md); IDs are UUIDs; timestamps require an explicit UTC offset. Every endpoint authorizes before parameter/existence checks.
 
 | Method/path | Capability |
 | --- | --- |

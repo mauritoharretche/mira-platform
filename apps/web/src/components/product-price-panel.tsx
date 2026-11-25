@@ -26,7 +26,7 @@ function validPrice(value: unknown, variantId: string): value is Price {
   return typeof price.revision_id === "string" && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(price.revision_id)
     && price.variant_id === variantId && typeof price.sequence === "string" && /^[1-9][0-9]{0,18}$/.test(price.sequence)
     && typeof price.amount === "string" && /^(?:0|[1-9][0-9]{0,11})\.[0-9]{2}$/.test(price.amount)
-    && price.currency === "ARS" && price.price_basis === "PER_VARIANT" && validRecordedAt(price.recorded_at);
+    && price.currency === "ARS" && (price.price_basis === "PER_VARIANT" || price.price_basis === "PER_KG") && validRecordedAt(price.recorded_at);
 }
 
 export function ProductPricePanel({ variantId, locked, uncertain, onUncertain, pendingConflict, onConflict, onConflictResolved, acquire, release }: {
@@ -44,6 +44,7 @@ export function ProductPricePanel({ variantId, locked, uncertain, onUncertain, p
   const [startedWithConflict] = useState(pendingConflict !== null);
   const [current, setCurrent] = useState<Price | null | undefined>(undefined);
   const [baseRevision, setBaseRevision] = useState<string | null>(pendingConflict?.baseRevision ?? null);
+  const [priceBasis,setPriceBasis] = useState<Price["price_basis"]>(pendingConflict?.priceBasis ?? "PER_VARIANT");
   const [draft, setDraft] = useState(pendingConflict?.draft ?? "");
   const [history, setHistory] = useState<Price[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -75,7 +76,7 @@ export function ProductPricePanel({ variantId, locked, uncertain, onUncertain, p
       if (!active()) return false;
       if (!result || !(result.price === null || validPrice(result.price, variantId))) throw new OperatorError("invalid_response");
       setCurrent(result.price);
-      if (initial && !startedWithConflict) { setBaseRevision(result.price?.revision_id ?? null); setDraft(result.price?.amount ?? ""); }
+      if (initial && !startedWithConflict) { setBaseRevision(result.price?.revision_id ?? null); setDraft(result.price?.amount ?? ""); setPriceBasis(result.price?.price_basis ?? "PER_VARIANT"); }
       setReadError("");
       return true;
     } catch (failure) {
@@ -136,7 +137,7 @@ export function ProductPricePanel({ variantId, locked, uncertain, onUncertain, p
     setBusy(true); setWriteError(""); setNotice(""); setHistoryError("");
     try {
       const response = await post<{ price: Price }>(`/catalog/variants/${encodeURIComponent(variantId)}/price`,
-        { amount, currency: "ARS", expected_revision_id: baseRevision });
+        { amount, currency: "ARS", expected_revision_id: baseRevision, price_basis: priceBasis });
       if (!response || !validPrice(response.price, variantId)) throw new OperatorError("invalid_response", undefined, true);
       if (!alive.current) return;
       setCurrent(response.price); setBaseRevision(response.price.revision_id); setDraft(response.price.amount);
@@ -149,7 +150,7 @@ export function ProductPricePanel({ variantId, locked, uncertain, onUncertain, p
       if (!alive.current) return;
       setWriteError(messageFor(failure));
       if (failure instanceof OperatorError && failure.code === "price_conflict") {
-        onConflict({ draft, baseRevision });
+        onConflict({ draft, baseRevision, priceBasis });
         setConflict(true); setReviewed(false);
       }
       if (failure instanceof OperatorError && failure.uncertain) onUncertain();
@@ -159,13 +160,13 @@ export function ProductPricePanel({ variantId, locked, uncertain, onUncertain, p
 
   return <section className="panel price-panel" aria-labelledby="price-title">
     <div className="section-heading"><div><p className="eyebrow">Valor administrativo</p><h2 id="price-title">Precio de la variante</h2></div></div>
-    <p className="muted">ARS por variante (PER_VARIANT). No expresa precio por peso, impuestos ni disponibilidad para vender.</p>
+    <p className="muted">ARS con base explícita por variante o por kilogramo. No implica impuestos, existencia ni habilitación de venta.</p>
     {!canRead ? <p>Sin permiso para consultar precios.</p> : <>
       {readError && <p role="alert" className="notice">{readError}</p>}
       {uncertain && <p role="status" className="notice">Resultado incierto para esta variante. La consulta permite revisar el estado, pero no confirma quién realizó la escritura. No reenvíes el precio desde este panel.</p>}
       <div className="workspace-operation-grid"><div className="workspace-record-block"><p className="workspace-block-label">Registrado</p>
       {current === undefined ? !readError && <p role="status">Consultando precio…</p> : current === null ? <p className="empty-state">Sin precio asignado</p> : <>
-        <p className="stock-count">{formatPriceARS(current.amount)}</p>
+        <p className="stock-count">{formatPriceARS(current.amount)}</p><p>Base registrada: {current.price_basis === "PER_KG" ? "por KG" : "por variante"}</p>
         <p className="caption">Revisión {current.sequence}. Registrada: {new Intl.DateTimeFormat("es-AR", { dateStyle: "short", timeStyle: "short", timeZone: "UTC" }).format(new Date(current.recorded_at))} UTC.</p>
       </>}
       <button type="button" className="button-quiet" disabled={busy || locked} onClick={() => void refresh()}>Consultar precio vigente</button>
@@ -178,6 +179,7 @@ export function ProductPricePanel({ variantId, locked, uncertain, onUncertain, p
       {!canWrite ? <p>Sin permiso para asignar o actualizar precios.</p> : <form onSubmit={(event) => void save(event)} aria-busy={busy}>
         <fieldset disabled={busy || locked || uncertain || current === undefined || conflict || needsReview}>
           <legend>{current === null ? "Asignar primer precio" : "Actualizar precio"}</legend>
+          <label htmlFor="variant-price-basis">Base de precio</label><select id="variant-price-basis" value={priceBasis} onChange={(event)=>setPriceBasis(event.target.value as Price["price_basis"])}><option value="PER_VARIANT">Por variante</option><option value="PER_KG">Por kilogramo</option></select>
           <label htmlFor="variant-price-amount">Importe ARS por variante</label>
           <input id="variant-price-amount" type="text" inputMode="decimal" value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={32} required />
           <p className="caption">Sin separador de miles. Usá coma o punto para los centavos.</p>
@@ -194,7 +196,7 @@ export function ProductPricePanel({ variantId, locked, uncertain, onUncertain, p
         {!loadingHistory && history.length === 0 && !historyError && <p className="empty-state">Todavía no hay revisiones.</p>}
         {history.length > 0 && <div className="table-wrap"><table><caption className="visually-hidden">Revisiones de precio en orden descendente. Fechas en UTC.</caption>
           <thead><tr><th>Revisión</th><th>Importe</th><th>Registro UTC</th></tr></thead>
-          <tbody>{history.map((item) => <tr key={item.revision_id}><td data-label="Revisión">{item.sequence}</td><td data-label="Importe">{formatPriceARS(item.amount)}</td><td data-label="Registro UTC">{new Intl.DateTimeFormat("es-AR", { dateStyle: "short", timeStyle: "short", timeZone: "UTC" }).format(new Date(item.recorded_at))}</td></tr>)}</tbody>
+          <tbody>{history.map((item) => <tr key={item.revision_id}><td data-label="Revisión">{item.sequence}</td><td data-label="Importe">{formatPriceARS(item.amount)} · {item.price_basis === "PER_KG" ? "por KG" : "por variante"}</td><td data-label="Registro UTC">{new Intl.DateTimeFormat("es-AR", { dateStyle: "short", timeStyle: "short", timeZone: "UTC" }).format(new Date(item.recorded_at))}</td></tr>)}</tbody>
         </table></div>}
         {cursor && <button type="button" disabled={locked || loadingHistory} onClick={() => void loadHistory(cursor)}>Ver revisiones anteriores</button>}
       </>}

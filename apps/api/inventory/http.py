@@ -8,25 +8,24 @@ from identity.application import require_capability
 from identity.contracts import Capability
 from system.http import OperatorAPIView, StrictSerializer, StrictTextField, error_response
 
+from .quantities import parse_quantity, format_quantity, unit as accounting_unit
 from . import application
 from .contracts import (MAX_STOCK_INTEGER, InventoryUnit, InventoryValidationError,
                         InventoryVariantNotFoundError, StockConflictError, StockNotInitializedError)
 
 
 class ReceiptInput(StrictSerializer):
-    quantity = StrictTextField(max_length=19, trim_whitespace=False)
+    quantity = StrictTextField(max_length=30, trim_whitespace=False)
     unit = StrictTextField(trim_whitespace=False)
     expected_version = serializers.JSONField(allow_null=True)
 
-    def validate_quantity(self, value):
-        if not value.isascii() or not value.isdecimal() or value.startswith("0") or not 1 <= int(value) <= MAX_STOCK_INTEGER:
-            raise serializers.ValidationError("Use a positive canonical integer within technical bounds.")
-        return int(value)
-
-    def validate_unit(self, value):
-        if value != "EACH":
-            raise serializers.ValidationError("Explicit EACH is required.")
-        return InventoryUnit.EACH
+    def validate(self, attrs):
+        try:
+            attrs["unit"] = accounting_unit(attrs["unit"])
+            attrs["quantity"] = parse_quantity(attrs["quantity"], attrs["unit"], positive=True)
+        except InventoryValidationError:
+            raise serializers.ValidationError("Invalid exact quantity or accounting unit") from None
+        return attrs
 
     def validate_expected_version(self, value):
         if value is not None:
@@ -35,14 +34,18 @@ class ReceiptInput(StrictSerializer):
 
 
 class AdjustmentInput(StrictSerializer):
-    new_on_hand = StrictTextField(max_length=19, trim_whitespace=False)
+    new_on_hand = StrictTextField(max_length=30, trim_whitespace=False)
+    unit = StrictTextField(required=False, default="EACH")
     expected_version = StrictTextField(max_length=19, trim_whitespace=False)
     reason = StrictTextField(max_length=255, trim_whitespace=True)
 
-    def validate_new_on_hand(self, value):
-        if not value.isascii() or not value.isdecimal() or (len(value) > 1 and value.startswith("0")) or int(value) > MAX_STOCK_INTEGER:
-            raise serializers.ValidationError("Use a canonical nonnegative integer within technical bounds.")
-        return int(value)
+    def validate(self, attrs):
+        try:
+            attrs["unit"] = accounting_unit(attrs["unit"])
+            attrs["new_on_hand"] = parse_quantity(attrs["new_on_hand"], attrs["unit"])
+        except InventoryValidationError:
+            raise serializers.ValidationError("Invalid exact stock quantity") from None
+        return attrs
 
     def validate_expected_version(self, value):
         if not value.isascii() or not value.isdecimal() or value.startswith("0") or not 1 <= int(value) <= MAX_STOCK_INTEGER:
@@ -66,7 +69,7 @@ def _stock_payload(stock):
     if stock is None:
         return None
     return {"position_id": str(stock.position_id), "variant_id": str(stock.variant_id),
-            "unit": stock.unit.value, "on_hand": str(stock.on_hand), "version": str(stock.version),
+            "unit": stock.unit.value, "on_hand": format_quantity(stock.on_hand, stock.unit), "version": str(stock.version),
             "created_at": stock.created_at.isoformat(), "updated_at": stock.updated_at.isoformat()}
 
 
@@ -145,7 +148,7 @@ class MovementsView(OperatorAPIView):
         page = [entry for entry in movements if before is None or entry.sequence < before][:51]
         result = [{"movement_id": str(entry.movement_id), "sequence": str(entry.sequence),
                    "kind": entry.kind.value, "unit": entry.unit.value,
-                   "quantity_before": str(entry.quantity_before), "delta": str(entry.delta),
-                   "quantity_after": str(entry.quantity_after), "reason": entry.reason,
+                   "quantity_before": format_quantity(entry.quantity_before, entry.unit), "delta": format_quantity(entry.delta, entry.unit),
+                   "quantity_after": format_quantity(entry.quantity_after, entry.unit), "reason": entry.reason,
                    "recorded_at": entry.recorded_at.isoformat()} for entry in page[:50]]
         return Response({"movements": result, "next_cursor": str(page[49].sequence) if len(page) > 50 else None})

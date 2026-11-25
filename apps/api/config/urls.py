@@ -10,6 +10,8 @@ from inventory.reservation_http import (AvailabilityView, ReservationsView, Rese
 from procurement.http import (ConfirmOrderView, OrderView, OrdersView, ReceiptOperationView,
                               ReceiveOrderView, SupplierView, SuppliersView)
 
+from inventory.count_http import CountsView, CountView, ObservationView, ReviewCountView, CompleteCountView, LossView, PhysicalOperationView
+
 urlpatterns = [
     path("api/v1/", include("system.urls")),
     path("api/v1/operator/auth/csrf", csrf_token, name="operator-csrf"),
@@ -30,6 +32,13 @@ urlpatterns = [
     path("api/v1/operator/inventory/variants/<str:variant_id>/adjustments", AdjustmentView.as_view(), name="operator-stock-adjustments"),
     path("api/v1/operator/inventory/variants/<str:variant_id>/stock", StockView.as_view(), name="operator-stock"),
     path("api/v1/operator/inventory/variants/<str:variant_id>/movements", MovementsView.as_view(), name="operator-movements"),
+    path("api/v1/operator/inventory/counts", CountsView.as_view(), name="operator-counts"),
+    path("api/v1/operator/inventory/counts/<str:count_id>", CountView.as_view(), name="operator-count"),
+    path("api/v1/operator/inventory/counts/<str:count_id>/lines/<str:line_id>", ObservationView.as_view(), name="operator-count-observation"),
+    path("api/v1/operator/inventory/counts/<str:count_id>/review", ReviewCountView.as_view(), name="operator-count-review"),
+    path("api/v1/operator/inventory/counts/<str:count_id>/complete", CompleteCountView.as_view(), name="operator-count-complete"),
+    path("api/v1/operator/inventory/losses", LossView.as_view(), name="operator-loss"),
+    path("api/v1/operator/inventory/physical-operations/<str:operation_id>", PhysicalOperationView.as_view(), name="operator-physical-operation"),
     path("api/v1/operator/inventory/locations", LocationsView.as_view(), name="operator-stock-locations"),
     path("api/v1/operator/inventory/variants/<str:variant_id>/availability", AvailabilityView.as_view(), name="operator-availability"),
     path("api/v1/operator/inventory/reservations", ReservationsView.as_view(), name="operator-reservations"),

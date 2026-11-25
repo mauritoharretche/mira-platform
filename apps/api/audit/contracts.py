@@ -24,6 +24,8 @@ class InventoryMovementAuditAction(Enum):
     STOCK_RECEIVED = "inventory.stock_received"
     STOCK_ADJUSTED = "inventory.stock_adjusted"
     STOCK_CONSUMED = "inventory.stock_consumed"
+    STOCK_COUNTED = "inventory.stock_counted"
+    STOCK_WRITTEN_OFF = "inventory.stock_written_off"
 
 
 class ProcurementAuditAction(Enum):

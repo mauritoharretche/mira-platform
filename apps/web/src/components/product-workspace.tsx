@@ -13,7 +13,7 @@ import { StockPanel } from "./stock-panel";
 export { OperationPermitCoordinator };
 export type { OperationPermit };
 
-export type PendingPriceConflict = { draft: string; baseRevision: string | null };
+export type PendingPriceConflict = { draft: string; baseRevision: string | null; priceBasis?: "PER_VARIANT" | "PER_KG" };
 export type MeasurementDraft = { saleUnit: "" | "EACH" | "G" | "KG"; amount: string;
   netUnit: "" | "G" | "KG"; baseVersion: string | null };
 export type PendingMeasurementConflict = { draft: MeasurementDraft };

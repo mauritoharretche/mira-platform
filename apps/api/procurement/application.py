@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 import unicodedata
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from uuid import UUID
 
 from django.db import IntegrityError, transaction
@@ -13,6 +13,9 @@ from django.utils import timezone
 from audit import application as audit_application
 from audit.contracts import ProcurementAuditAction
 from catalog import references as catalog_references
+from catalog.calculations import calculate_amount
+from catalog.contracts import PriceBasis, MeasurementUnit
+from inventory.quantities import format_quantity
 from identity import application as identity_application
 from identity.contracts import Capability
 from inventory import application as inventory_application
@@ -83,12 +86,21 @@ def order_snapshot(order):
     "lines": [{"id": str(line.pk), "variant_id": str(line.variant_id),
                        "variant_label": line.variant_label, "variant_sku": line.variant_sku,
                        "product_name": line.product_name,
-                       "unit": line.unit, "quantity": str(line.quantity),
-                       "received_quantity": str(line.received_quantity),
-                       "pending_quantity": str(line.quantity - line.received_quantity),
+                       "unit": line.unit, "cost_basis": line.cost_basis, "quantity": format_quantity(line.quantity, line.unit),
+                       "received_quantity": format_quantity(line.received_quantity, line.unit),
+                       "pending_quantity": format_quantity(line.quantity - line.received_quantity, line.unit),
                        "unit_cost_ars": format(line.unit_cost_ars, ".2f")}
                       for line in lines],
-            "total_cost_ars": format(sum((line.quantity * line.unit_cost_ars for line in lines), Decimal("0.00")), ".2f")}
+            "total_cost_ars": _order_total(lines)}
+
+
+def _order_total(lines):
+    with localcontext() as context:
+        context.prec = 60
+        total = sum((calculate_amount(amount=line.unit_cost_ars, price_basis=PriceBasis(line.cost_basis),
+            quantity=Decimal(format_quantity(line.quantity, line.unit)), unit=MeasurementUnit(line.unit)).amount_ars
+            for line in lines), Decimal("0.00"))
+        return format(total, ".2f")
 
 
 def receipt_snapshot(receipt, *, include_allocations=False):
@@ -96,12 +108,12 @@ def receipt_snapshot(receipt, *, include_allocations=False):
             "operation_id": str(receipt.operation_id), "actor_id": receipt.actor_id,
             "recorded_at": receipt.recorded_at.isoformat(),
             "lines": [{"order_line_id": str(line.order_line_id),
-                       "delivered_quantity": str(line.delivered_quantity),
-                       "accepted_quantity": str(line.accepted_quantity),
+                       "unit": line.order_line.unit, "delivered_quantity": format_quantity(line.delivered_quantity, line.order_line.unit),
+                       "accepted_quantity": format_quantity(line.accepted_quantity, line.order_line.unit),
                        "difference_reason": line.difference_reason,
                        "stock_movement_id": str(line.stock_movement_id) if line.stock_movement_id else None,
                        "allocations": ([{"lot_id": str(item.lot_id), "location_id": str(item.location_id),
-                                        "quantity": str(item.quantity)} for item in line.allocations.order_by("id")]
+                                        "quantity": format_quantity(item.quantity, line.order_line.unit)} for item in line.allocations.order_by("id")]
                                        if include_allocations else None)}
                       for line in receipt.lines.order_by("id")]}
 
@@ -189,29 +201,32 @@ def _lines(values):
     result = []
     seen = set()
     for value in values:
-        if not isinstance(value, dict) or set(value) != {"variant_id", "quantity", "unit", "unit_cost_ars"}:
+        if not isinstance(value, dict) or not {"variant_id", "quantity", "unit", "unit_cost_ars"} <= set(value) or set(value)-{"variant_id", "quantity", "unit", "unit_cost_ars", "cost_basis"}:
             raise ProcurementValidationError("invalid order line")
         variant = _uuid(value["variant_id"])
-        if variant in seen or value["unit"] != "EACH":
+        if variant in seen or value["unit"] not in ("EACH", "G"):
             raise ProcurementValidationError("duplicate Variant or non-EACH unit")
         seen.add(variant)
         quantity = _count(value["quantity"])
         cost = value["unit_cost_ars"]
         if not isinstance(cost, Decimal) or not _COST.fullmatch(format(cost, "f")):
             raise ProcurementValidationError("canonical ARS cost with two decimal places required")
-        result.append((variant, quantity, cost))
+        basis = value.get("cost_basis", "PER_VARIANT")
+        if (value["unit"], basis) not in (("EACH", "PER_VARIANT"), ("G", "PER_KG")):
+            raise ProcurementValidationError("Explicit compatible unit cost basis required")
+        result.append((variant, quantity, cost, value["unit"], basis))
     return result
 
 
 def _insert_lines(order, values):
-    for variant_id, quantity, cost in values:
+    for variant_id, quantity, cost, unit, basis in values:
         variant = catalog_references.variant_reference(variant_id=variant_id)
         if variant is None:
             raise ProcurementNotFoundError("Variant not found")
         PurchaseOrderLine.objects.using("default").create(
             order=order, variant_id=variant_id, variant_label=variant["label"],
             variant_sku=variant["sku"], product_name=variant["product_name"],
-            quantity=quantity, unit_cost_ars=cost,
+            quantity=quantity, unit_cost_ars=cost, unit=unit, cost_basis=basis,
         )
 
 
@@ -296,7 +311,7 @@ def _receipt_values(values):
     normalized, seen = [], set()
     for value in values:
         required = {"order_line_id", "delivered_quantity", "accepted_quantity", "difference_reason", "expected_stock_version"}
-        if not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"allocations"}:
+        if not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"allocations", "unit"}:
             raise ProcurementValidationError("invalid receipt line")
         line_id = _uuid(value["order_line_id"])
         if line_id in seen:
@@ -318,6 +333,9 @@ def _receipt_values(values):
             _version(stock_version)
         if accepted == 0 and stock_version is not None:
             raise ProcurementValidationError("no stock version for a rejected line")
+        accounting_unit = value.get("unit", "EACH")
+        if accounting_unit not in ("EACH", "G"):
+            raise ProcurementValidationError("Explicit accounting unit required")
         allocations = value.get("allocations")
         if allocations is not None:
             if not isinstance(allocations, list) or not 1 <= len(allocations) <= 10 or accepted == 0:
@@ -334,7 +352,7 @@ def _receipt_values(values):
             if sum(item[2] for item in normalized_allocations) != accepted:
                 raise ProcurementValidationError("physical allocations must cover accepted quantity")
             allocations = sorted(normalized_allocations, key=lambda item: (str(item[0]), str(item[1])))
-        normalized.append((line_id, delivered, accepted, reason, stock_version, allocations))
+        normalized.append((line_id, delivered, accepted, reason, stock_version, allocations, accounting_unit))
     return sorted(normalized, key=lambda item: str(item[0]))
 
 
@@ -345,8 +363,8 @@ def receive_order(*, principal, order_id, operation_id, expected_version, lines)
     identity = {"order_id": str(order_id), "expected_version": expected_version,
                 "lines": [[str(line_id), delivered, accepted, reason, stock_version]
                           + ([ [[str(lot), str(location), quantity] for lot, location, quantity in allocations] ]
-                             if allocations is not None else [])
-                          for line_id, delivered, accepted, reason, stock_version, allocations in values]}
+                             if allocations is not None else []) + ([accounting_unit] if accounting_unit != "EACH" else [])
+                          for line_id, delivered, accepted, reason, stock_version, allocations, accounting_unit in values]}
     request_sha = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     try:
         with transaction.atomic(using="default"):
@@ -364,16 +382,18 @@ def receive_order(*, principal, order_id, operation_id, expected_version, lines)
                 raise ProcurementValidationError("order version exhausted")
             available = {line.pk: line for line in order.lines.select_for_update()}
             if any(line_id not in available or delivered > available[line_id].quantity - available[line_id].received_quantity
-                   for line_id, delivered, unused, unused_reason, unused_version, unused_allocations in values):
+                   for line_id, delivered, unused, unused_reason, unused_version, unused_allocations, unused_unit in values):
                 raise ProcurementConflictError("receipt exceeds pending order quantity")
             receipt = GoodsReceipt.objects.using("default").create(
                 order=order, operation_id=operation_id, request_sha256=request_sha, actor_id=actor.actor_id)
-            for line_id, delivered, accepted, reason, stock_version, allocations in values:
+            for line_id, delivered, accepted, reason, stock_version, allocations, accounting_unit in values:
                 line = available[line_id]
+                if line.unit != accounting_unit:
+                    raise ProcurementValidationError("Receipt unit differs from order")
                 movement_id = None
                 if accepted:
                     result = inventory_application.receive_stock_for_purchase(
-                        principal=principal, variant_id=line.variant_id, unit=InventoryUnit.EACH,
+                        principal=principal, variant_id=line.variant_id, unit=InventoryUnit(accounting_unit),
                         quantity=accepted, expected_version=stock_version)
                     movement_id = result.movement_id
                     if allocations is not None:
