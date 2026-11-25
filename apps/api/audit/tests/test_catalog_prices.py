@@ -48,7 +48,7 @@ class PriceAuditContractTests(TestCase):
         self.assertIsNotNone(second.occurred_at.utcoffset())
         self.assertEqual({field.name for field in second._meta.fields}, {
             "id", "actor_id", "action", "variant_id", "previous_revision_id", "new_revision_id",
-            "previous_amount", "new_amount", "currency", "price_basis", "occurred_at", "result",
+            "previous_amount", "new_amount", "currency", "price_basis", "previous_price_basis", "occurred_at", "result",
         })
         self.assertFalse(any(field.is_relation for field in second._meta.fields))
 
@@ -58,6 +58,7 @@ class PriceAuditContractTests(TestCase):
             {"previous_revision_id": uuid4(), "previous_amount": Decimal("20.000")},
             {"variant_id": "fake"}, {"new_revision_id": None},
             {"currency": "USD"}, {"currency": "ars"}, {"price_basis": "KG"},
+            {"previous_price_basis": "PER_KG"}, {"previous_price_basis": "invalid"},
             {"previous_revision_id": "fake", "previous_amount": Decimal("10")},
         ]
         same = uuid4()

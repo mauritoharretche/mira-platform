@@ -56,6 +56,8 @@ def _append(*, actor, position, before, delta, kind, reason):
         actor=actor,
         action=(InventoryMovementAuditAction.STOCK_RECEIVED if kind is StockMovementKind.RECEIPT
                 else InventoryMovementAuditAction.STOCK_CONSUMED if kind is StockMovementKind.CONSUMPTION
+                else InventoryMovementAuditAction.STOCK_COUNTED if kind is StockMovementKind.COUNT
+                else InventoryMovementAuditAction.STOCK_WRITTEN_OFF if kind is StockMovementKind.WRITE_OFF
                 else InventoryMovementAuditAction.STOCK_ADJUSTED),
         variant_id=position.variant_id, position_id=position.pk, movement_id=movement.pk,
         sequence=movement.sequence, unit=movement.unit,
@@ -69,7 +71,7 @@ def receive_stock(
     *, principal: object, variant_id: UUID, unit: InventoryUnit,
     quantity: int, expected_version: int | None,
 ) -> StockSnapshot:
-    """Receive EACH explicitly; trusted principal provenance belongs to the caller.
+    """Receive explicit EACH items or G milligram base units; trusted principal provenance belongs to the caller.
 
     None expects no position, never an unconditional increment. Stale committed
     retries conflict, without replay or business retries. An outer transaction
@@ -94,8 +96,8 @@ def _receive_stock(*, principal, variant_id, unit, quantity, expected_version) -
         actor = identity_application.require_capability(principal=principal, capability=Capability.RECEIVE_STOCK)
         _quantity(quantity, positive=True)
         _version(expected_version, allow_none=True)
-        if unit is not InventoryUnit.EACH:
-            raise InventoryValidationError("explicit InventoryUnit.EACH required")
+        if not isinstance(unit, InventoryUnit):
+            raise InventoryValidationError("explicit InventoryUnit required")
         _variant(variant_id)
         position = StockPosition.objects.using("default").select_for_update().filter(variant_id=variant_id).first()
         if position is None:
@@ -112,6 +114,8 @@ def _receive_stock(*, principal, variant_id, unit, quantity, expected_version) -
                 raise
             before = 0
         else:
+            if position.accounting_unit != unit.value:
+                raise InventoryValidationError("Accounting unit cannot change after stock history")
             if expected_version != position.version:
                 raise StockConflictError("stock position has changed")
             before = position.on_hand
@@ -129,7 +133,7 @@ def _receive_stock(*, principal, variant_id, unit, quantity, expected_version) -
 @inventory_transaction
 def adjust_stock(
     *, principal: object, variant_id: UUID, new_on_hand: int,
-    reason: str, expected_version: int,
+    reason: str, expected_version: int, unit: InventoryUnit = InventoryUnit.EACH,
 ) -> StockSnapshot:
     """Set a desired balance with an explanation; this is not a sales operation."""
     with transaction.atomic(using="default"):
@@ -143,6 +147,8 @@ def adjust_stock(
         position = StockPosition.objects.using("default").select_for_update().filter(variant_id=variant_id).first()
         if position is None:
             raise StockNotInitializedError("stock position is not initialized")
+        if not isinstance(unit, InventoryUnit) or position.accounting_unit != unit.value:
+            raise InventoryValidationError("Explicit matching accounting unit required")
         if expected_version != position.version:
             raise StockConflictError("stock position has changed")
         allocated = (StockLotBalance.objects.using("default").filter(lot__variant_id=variant_id)

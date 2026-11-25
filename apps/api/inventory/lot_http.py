@@ -9,6 +9,7 @@ from identity.application import require_capability
 from identity.contracts import Capability
 from system.http import OperatorAPIView, StrictSerializer, StrictTextField, error_response
 
+from .quantities import parse_quantity, unit as accounting_unit
 from . import lot_application
 from .contracts import InventoryValidationError, InventoryVariantNotFoundError, StockConflictError, StockNotInitializedError
 
@@ -66,28 +67,41 @@ class StatusInput(StrictSerializer):
 
 
 class TransferInput(StrictSerializer):
+    unit = StrictTextField(required=False, default="EACH")
     source_id = serializers.UUIDField()
     destination_id = serializers.UUIDField()
-    quantity = StrictTextField(max_length=19, trim_whitespace=False)
+    quantity = StrictTextField(max_length=30, trim_whitespace=False)
     expected_version = StrictTextField(max_length=19, trim_whitespace=False)
     reason = StrictTextField(max_length=255)
 
-    def validate_quantity(self, value):
-        return _positive(value)
+    def validate(self, attrs):
+        try:
+            attrs["unit"] = accounting_unit(attrs["unit"])
+            attrs["quantity"] = parse_quantity(attrs["quantity"], attrs["unit"], positive=True)
+        except InventoryValidationError:
+            raise serializers.ValidationError("Invalid exact transfer quantity") from None
+        return attrs
 
     def validate_expected_version(self, value):
         return _positive(value)
 
 
 class CorrectionInput(StrictSerializer):
+    unit = StrictTextField(required=False, default="EACH")
     location_id = serializers.UUIDField()
-    delta = StrictTextField(max_length=20, trim_whitespace=False)
+    delta = StrictTextField(max_length=30, trim_whitespace=False)
     expected_lot_version = StrictTextField(max_length=19, trim_whitespace=False)
     expected_stock_version = StrictTextField(max_length=19, trim_whitespace=False)
     reason = StrictTextField(max_length=255)
 
-    def validate_delta(self, value):
-        return _nonzero(value)
+    def validate(self, attrs):
+        try:
+            attrs["unit"] = accounting_unit(attrs["unit"])
+            attrs["delta"] = parse_quantity(attrs["delta"], attrs["unit"], signed=True)
+            if attrs["delta"] == 0: raise InventoryValidationError("Nonzero correction required")
+        except InventoryValidationError:
+            raise serializers.ValidationError("Invalid exact correction quantity") from None
+        return attrs
 
     def validate_expected_lot_version(self, value):
         return _positive(value)

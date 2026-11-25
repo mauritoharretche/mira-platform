@@ -9,16 +9,23 @@ from identity.application import require_capability
 from identity.contracts import Capability
 from system.http import OperatorAPIView, StrictSerializer, StrictTextField
 from . import reservations
-from .contracts import ReservationLine
+from .contracts import ReservationLine, InventoryValidationError, InventoryUnit
+from .quantities import parse_quantity, format_quantity, unit as accounting_unit
 from .lot_http import _positive, _respond, _uuid
 
 
 class ReservationLineInput(StrictSerializer):
+    unit = StrictTextField(required=False, default="EACH")
     variant_id = serializers.UUIDField()
-    quantity = StrictTextField(max_length=19, trim_whitespace=False)
+    quantity = StrictTextField(max_length=30, trim_whitespace=False)
 
-    def validate_quantity(self, value):
-        return _positive(value)
+    def validate(self, attrs):
+        try:
+            attrs["unit"] = accounting_unit(attrs["unit"])
+            attrs["quantity"] = parse_quantity(attrs["quantity"], attrs["unit"], positive=True)
+        except InventoryValidationError:
+            raise serializers.ValidationError("Exact matching quantity/unit required") from None
+        return attrs
 
 
 class ReservationInput(StrictSerializer):
@@ -40,14 +47,20 @@ class OperationInput(StrictSerializer):
 
 
 class ClassificationInput(OperationInput):
+    unit = StrictTextField(required=False, default="EACH")
     lot_id = serializers.UUIDField()
     location_id = serializers.UUIDField()
-    quantity = StrictTextField(max_length=19, trim_whitespace=False)
+    quantity = StrictTextField(max_length=30, trim_whitespace=False)
     expected_stock_version = StrictTextField(max_length=19, trim_whitespace=False)
     evidence = StrictTextField(max_length=255)
 
-    def validate_quantity(self, value):
-        return _positive(value)
+    def validate(self, attrs):
+        try:
+            attrs["unit"] = accounting_unit(attrs["unit"])
+            attrs["quantity"] = parse_quantity(attrs["quantity"], attrs["unit"], positive=True)
+        except InventoryValidationError:
+            raise serializers.ValidationError("Exact matching quantity/unit required") from None
+        return attrs
 
     def validate_expected_stock_version(self, value):
         return _positive(value)
@@ -72,10 +85,13 @@ def _payload(snapshot):
     value["variant_id"] = str(snapshot.variant_id)
     value["as_of"] = snapshot.as_of.isoformat()
     for field in ("physical", "allocated", "unallocated", "eligible", "reserved", "unavailable", "available", "safety_stock"):
-        value[field] = str(value[field])
+        value[field] = format_quantity(value[field], snapshot.unit or InventoryUnit.EACH)
+    value["unit"] = snapshot.unit.value if snapshot.unit else None
     for row in value["balances"]:
-        for field in ("balance_id", "lot_id", "location_id", "physical", "reserved", "available"):
+        for field in ("balance_id", "lot_id", "location_id"):
             row[field] = str(row[field])
+        for field in ("physical", "reserved", "available"):
+            row[field] = format_quantity(row[field], snapshot.unit or InventoryUnit.EACH)
     return value
 
 

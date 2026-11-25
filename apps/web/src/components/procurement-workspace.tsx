@@ -1,5 +1,7 @@
 "use client";
 
+import { quantityBase } from "@/lib/quantities";
+
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useOperator } from "@/components/operations-shell";
 import { OperatorError, request, Stock } from "@/lib/operations-api";
@@ -61,9 +63,9 @@ export function ProcurementWorkspace() {
     setOrder(next);
     setDraftSupplier(next.supplier_id);
     setLines(next.lines.map((line) => ({ variant_id: line.variant_id, quantity: line.quantity,
-      unit: "EACH", unit_cost_ars: line.unit_cost_ars })));
-    setReceiptLines(next.lines.filter((line) => line.pending_quantity !== "0").map((line) => ({
-      order_line_id: line.id, delivered_quantity: "", accepted_quantity: "", difference_reason: null,
+      unit: line.unit, cost_basis: line.cost_basis, unit_cost_ars: line.unit_cost_ars })));
+    setReceiptLines(next.lines.filter((line) => (quantityBase(line.pending_quantity,line.unit) ?? 0n)>0n).map((line) => ({
+      order_line_id: line.id, unit: line.unit, delivered_quantity: "", accepted_quantity: "", difference_reason: null,
       expected_stock_version: null,
     })));
   }
@@ -237,7 +239,9 @@ export function ProcurementWorkspace() {
         {lines.map((line, index) => <fieldset key={index} className="proc-line"><legend>Renglón {index + 1}</legend>
           <label htmlFor={`variant-${index}`}>Variante</label><select id={`variant-${index}`} value={line.variant_id} onChange={(event) => changeLine(index, { variant_id: event.target.value })} required>
             <option value="">Seleccionar variante</option>{variants.map((item) => <option key={item.id} value={item.id}>{item.product_name} · {item.label} · {item.sku}</option>)}</select>
-          <label htmlFor={`qty-${index}`}>Cantidad EACH</label><input id={`qty-${index}`} inputMode="numeric" value={line.quantity} onChange={(event) => changeLine(index, { quantity: event.target.value })} required />
+          <label htmlFor={`unit-${index}`}>Unidad contable</label><select id={`unit-${index}`} value={line.unit} onChange={(event)=>changeLine(index,{unit:event.target.value as "EACH" | "G"})}><option value="EACH">EACH</option><option value="G">G — precisión 0,001 g</option></select>
+          <label htmlFor={`basis-${index}`}>Base del costo</label><select id={`basis-${index}`} value={line.cost_basis ?? "PER_VARIANT"} onChange={(event)=>changeLine(index,{cost_basis:event.target.value as "PER_VARIANT" | "PER_KG"})}><option value="PER_VARIANT">Por unidad EACH</option><option value="PER_KG">Por kilogramo</option></select>
+          <label htmlFor={`qty-${index}`}>Cantidad {line.unit}</label><input id={`qty-${index}`} inputMode="numeric" value={line.quantity} onChange={(event) => changeLine(index, { quantity: event.target.value })} required />
           <label htmlFor={`cost-${index}`}>Costo unitario ARS</label><input id={`cost-${index}`} inputMode="decimal" value={line.unit_cost_ars} onChange={(event) => changeLine(index, { unit_cost_ars: event.target.value })} required />
           {lines.length > 1 && <button type="button" onClick={() => setLines((current) => current.filter((unused, position) => position !== index))}>Quitar renglón</button>}
         </fieldset>)}
@@ -252,30 +256,30 @@ export function ProcurementWorkspace() {
       <p className="identifier">Orden {order.id} · Revisión {order.version}</p>
       <div className="table-wrap"><table><thead><tr><th>Variante</th><th>Pedida</th><th>Recibida</th><th>Pendiente</th><th>Costo ARS</th><th>Inventario</th></tr></thead>
         <tbody>{order.lines.map((line) => <tr key={line.id}><td>{line.product_name} · {line.variant_label}<br /><small>SKU {line.variant_sku}</small></td>
-          <td>{line.quantity}</td><td>{line.received_quantity}</td><td>{line.pending_quantity}</td><td>{line.unit_cost_ars}</td>
+          <td>{line.quantity}</td><td>{line.received_quantity}</td><td>{line.pending_quantity} {line.unit}</td><td>{line.unit_cost_ars} / {line.cost_basis === "PER_KG" ? "KG" : "EACH"}</td>
           <td>{can("inventory.read_stock") ? <><button type="button" onClick={() => void inspectStock(line.variant_id)}>Consultar stock</button>
-            <span className="proc-stock-result">{line.variant_id in stocks ? `${stocks[line.variant_id]?.on_hand ?? "Sin posición"} EACH` : "Pendiente de consulta"}</span></> : "Sin permiso"}</td></tr>)}</tbody></table></div>
+            <span className="proc-stock-result">{line.variant_id in stocks ? `${stocks[line.variant_id]?.on_hand ?? "Sin posición"} ${stocks[line.variant_id]?.unit ?? ""}` : "Pendiente de consulta"}</span></> : "Sin permiso"}</td></tr>)}</tbody></table></div>
       <p>Total previsto: <strong>ARS {order.total_cost_ars}</strong></p>
       <button type="button" onClick={() => void readOrder(order.id).catch((failure) => setError(procurementFailure(failure)))}>Consultar estado vigente</button>
       {order.status === "DRAFT" && can(capability.confirm) && <button type="button" className="button-primary" disabled={busy || writeBlocked} onClick={() => void confirm()}>Confirmar orden</button>}
       <h3>Historial</h3><ol>{order.history?.map((item, index) => <li key={`${item.version}-${index}`}>{item.action} · revisión {item.version} · {item.occurred_at}</li>)}</ol>
       <h3>Recepciones</h3><ol>{order.receipts?.map((item) => <li key={item.id}>Recepción {item.id} · {item.recorded_at}
         <ul>{item.lines.map((line) => <li key={line.order_line_id}>
-          {order.lines.find((source) => source.id === line.order_line_id)?.variant_sku} · entregado {line.delivered_quantity}, aceptado {line.accepted_quantity} EACH
+          {order.lines.find((source) => source.id === line.order_line_id)?.variant_sku} · entregado {line.delivered_quantity}, aceptado {line.accepted_quantity} {line.unit ?? "EACH"}
           {line.difference_reason && <> · diferencia: {line.difference_reason}</>}
           {line.stock_movement_id && <> · movimiento de stock {line.stock_movement_id}</>}
           {line.allocations === null && <> · asignaciones: sin permiso de lectura</>}
           {line.allocations?.map((allocation) => <span key={`${allocation.lot_id}-${allocation.location_id}`}>
-            {" · "}lote {allocation.lot_id}, ubicación {allocation.location_id}: {allocation.quantity} EACH</span>)}
+            {" · "}lote {allocation.lot_id}, ubicación {allocation.location_id}: {allocation.quantity} {line.unit ?? "EACH"}</span>)}
         </li>)}</ul></li>)}</ol>
       {(order.status === "CONFIRMED" || order.status === "PARTIAL") && can(capability.receive) && <form onSubmit={(event) => void receive(event)} className="proc-form">
         <h3>Registrar recepción</h3><p className="muted">Ingresá lo entregado y lo aceptado. Si hay diferencias, explicalas sin borrar la historia.</p>
         {receiptLines.map((item) => {
           const source = order.lines.find((line) => line.id === item.order_line_id)!;
-          return <fieldset key={item.order_line_id} className="proc-line"><legend>{source.variant_label} · SKU {source.variant_sku} · pendiente {source.pending_quantity} EACH</legend>
-            <label htmlFor={`delivered-${source.id}`}>Cantidad entregada EACH</label><input id={`delivered-${source.id}`} inputMode="numeric" value={item.delivered_quantity}
+          return <fieldset key={item.order_line_id} className="proc-line"><legend>{source.variant_label} · SKU {source.variant_sku} · pendiente {source.pending_quantity} {source.unit}</legend>
+            <label htmlFor={`delivered-${source.id}`}>Cantidad entregada {source.unit}</label><input id={`delivered-${source.id}`} inputMode="numeric" value={item.delivered_quantity}
               onChange={(event) => changeReceiptLine(source.id, { delivered_quantity: event.target.value })} />
-            <label htmlFor={`accepted-${source.id}`}>Cantidad aceptada EACH</label><input id={`accepted-${source.id}`} inputMode="numeric" value={item.accepted_quantity}
+            <label htmlFor={`accepted-${source.id}`}>Cantidad aceptada {source.unit}</label><input id={`accepted-${source.id}`} inputMode="numeric" value={item.accepted_quantity}
               onChange={(event) => changeReceiptLine(source.id, { accepted_quantity: event.target.value })} />
             <label htmlFor={`difference-${source.id}`}>Motivo de diferencia, si corresponde</label><input id={`difference-${source.id}`} value={item.difference_reason ?? ""}
               onChange={(event) => changeReceiptLine(source.id, { difference_reason: event.target.value || null })} maxLength={255} />

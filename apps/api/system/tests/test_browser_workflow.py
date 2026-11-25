@@ -60,12 +60,13 @@ _BROWSER_CASES = {
         "lost-receipt", "expired",
     }),
     "procurement.spec.ts": frozenset({"procurement-journey"}),
+    "measured.spec.ts": frozenset({"measured-journey"}),
 }
 _FAILED_RESULT_STATES = frozenset({"failed", "timedOut", "interrupted"})
 _TEST_OUTCOMES = frozenset({"expected", "unexpected", "flaky", "skipped"})
 _GLOBAL_LOGIN_LIMIT = 30
 _GLOBAL_LOGIN_WINDOW = timedelta(seconds=60)
-_LOGIN_RESERVATIONS_PER_PROJECT = 19
+_LOGIN_RESERVATIONS_PER_PROJECT = 20
 
 
 def _login_capacity(window, now):
@@ -284,8 +285,8 @@ class BrowserLoginBudgetTests(unittest.TestCase):
                                         monotonic=self.monotonic, wait=self.wait)
 
     def test_capacity_sufficient_does_not_wait(self):
-        result = self.budget((11, self.start + _GLOBAL_LOGIN_WINDOW))
-        self.assertEqual(result, {"before_available": 19, "after_available": 19, "waited_seconds": 0.0})
+        result = self.budget((_GLOBAL_LOGIN_LIMIT-_LOGIN_RESERVATIONS_PER_PROJECT, self.start + _GLOBAL_LOGIN_WINDOW))
+        self.assertEqual(result, {"before_available": _LOGIN_RESERVATIONS_PER_PROJECT, "after_available": _LOGIN_RESERVATIONS_PER_PROJECT, "waited_seconds": 0.0})
         self.assertEqual(self.waits, [])
 
     def test_insufficient_capacity_waits_for_actual_expiry(self):
@@ -580,7 +581,7 @@ class OperatorBrowserTests(LiveServerTestCase):
         from django.contrib.auth.models import Permission
         for project in ("desktop", "mobile"):
             for scenario in ("journey", "csrf", "denied", "revoked", "duplicate", "lost-creation", "lost-receipt", "expired",
-                             "catalog-journey", "catalog-readonly", "catalog-revoked", "catalog-stale", "catalog-lost-category", "catalog-lost-change", "catalog-variants", "catalog-variants-lost", "catalog-price", "catalog-price-lost", "procurement-journey"):
+                             "catalog-journey", "catalog-readonly", "catalog-revoked", "catalog-stale", "catalog-lost-category", "catalog-lost-change", "catalog-variants", "catalog-variants-lost", "catalog-price", "catalog-price-lost", "procurement-journey", "measured-journey"):
                 username = f"fictional-{project}-{scenario}"
                 user = get_user_model()(username=username)
                 validate_password(password, user=user)
@@ -598,7 +599,7 @@ class OperatorBrowserTests(LiveServerTestCase):
                                        "catalog.view_variant_price_history")
                     if scenario == "catalog-price":
                         permissions = (*permissions, "catalog.set_variant_measurement_spec", "catalog.view_variantmeasurementspec")
-                    if scenario == "procurement-journey":
+                    if scenario in ("procurement-journey", "measured-journey"):
                         permissions = (*permissions, "procurement.view_supplier", "procurement.manage_supplier",
                                        "procurement.view_purchaseorder", "procurement.create_purchase_order",
                                        "procurement.edit_purchase_order", "procurement.confirm_purchase_order",
@@ -608,6 +609,10 @@ class OperatorBrowserTests(LiveServerTestCase):
                                        "inventory.read_availability", "inventory.view_stockreservation",
                                        "inventory.reserve_stock", "inventory.release_reservation",
                                        "inventory.consume_reservation", "inventory.set_location_eligibility")
+                    if scenario == "measured-journey":
+                        permissions = (*permissions, "catalog.view_category", "catalog.set_variant_price", "catalog.view_variantpricerevision",
+                                       "catalog.view_variant_price_history", "inventory.read_physical_inventory", "inventory.create_physical_count",
+                                       "inventory.record_physical_count", "inventory.review_physical_count", "inventory.complete_physical_count", "inventory.write_off_stock")
                     if scenario == "catalog-readonly":
                         permissions = ("catalog.view_product", "catalog.view_variant", "catalog.view_category")
                     for permission in permissions:
@@ -643,6 +648,12 @@ class OperatorBrowserTests(LiveServerTestCase):
                     product=product, label=f"Fictional pack {suffix}", sku=f"PROC-FIXTURE-{project}-{suffix}"))
         fixture_count = Product.objects.count()
         self.assertEqual(fixture_count, 120)
+        measured_variants = []
+        for project in ("desktop", "mobile"):
+            product = Product.objects.create(name=f"Fictional {project} measured")
+            measured_variants.append(Variant.objects.create(product=product,label="Fictional measured pack",sku=f"MEASURED-FIXTURE-{project}"))
+        fixture_count = Product.objects.count()
+        self.assertEqual(fixture_count, 122)
         # No PostgreSQL/Django secret is passed to Next or Playwright.
         env = {key: os.environ[key] for key in ("PATH", "HOME", "TMPDIR", "PLAYWRIGHT_BROWSERS_PATH") if key in os.environ}
         env.update(MIRA_API_BASE_URL=self.live_server_url.replace("localhost", "127.0.0.1"), NEXT_TELEMETRY_DISABLED="1",
@@ -774,14 +785,14 @@ class OperatorBrowserTests(LiveServerTestCase):
         self.assertEqual(Product.objects.count(), fixture_count + 12)
         self.assertEqual(Variant.objects.count(), fixture_count + 22)
         self.assertEqual(CatalogAuditEntry.objects.count(), 16)
-        self.assertEqual(StockPosition.objects.count(), 12)
-        self.assertEqual(StockMovement.objects.count(), 20)
-        self.assertEqual(InventoryMovementAuditEntry.objects.count(), 20)
+        self.assertEqual(StockPosition.objects.count(), 14)
+        self.assertEqual(StockMovement.objects.count(), 30)
+        self.assertEqual(InventoryMovementAuditEntry.objects.count(), 30)
         for variant in legacy_variants:
             audit = CatalogAuditEntry.objects.get(variant_id=variant.pk)
             owner = variant.sku.removeprefix("FICTIONAL-")
             self.assertEqual(audit.actor_id, str(accounts["fictional-" + owner]))
-        for position in StockPosition.objects.exclude(variant_id__in=[variant.pk for variant in procurement_variants]):
+        for position in StockPosition.objects.exclude(variant_id__in=[variant.pk for variant in procurement_variants + measured_variants]):
             movements = list(StockMovement.objects.filter(position=position).order_by("sequence"))
             audits = [InventoryMovementAuditEntry.objects.get(movement_id=item.pk) for item in movements]
             actor = CatalogAuditEntry.objects.get(variant_id=position.variant_id).actor_id if CatalogAuditEntry.objects.filter(variant_id=position.variant_id).exists() else None
@@ -851,8 +862,8 @@ class OperatorBrowserTests(LiveServerTestCase):
                 self.assertFalse(VariantMeasurementSpec.objects.filter(variant_id=variant.pk).exists())
         print("VARIANT_BROWSER_PERSISTENCE_PASS: 4 additions/audits; only explicit receipts, no price or measurement", flush=True)
 
-        self.assertEqual(VariantPriceRevision.objects.count(), 6)
-        self.assertEqual(CatalogPriceAuditEntry.objects.count(), 6)
+        self.assertEqual(VariantPriceRevision.objects.count(), 8)
+        self.assertEqual(CatalogPriceAuditEntry.objects.count(), 8)
         for project in ("desktop", "mobile"):
             for scenario, amounts in (("catalog-price", ["12.30", "14.50"]), ("catalog-price-lost", ["19.90"])):
                 product = fixture_products[project, scenario]
@@ -883,9 +894,9 @@ class OperatorBrowserTests(LiveServerTestCase):
                              [(spec.net_content_amount / 2, "G"), (spec.net_content_amount, "G")])
         print("MEASUREMENT_BROWSER_PERSISTENCE_PASS: 2 specifications; 4 versions/audits; no-op, conflict and malformed response did not duplicate writes", flush=True)
 
-        self.assertEqual((Supplier.objects.count(), PurchaseOrder.objects.count(), GoodsReceipt.objects.count()), (2, 2, 4))
-        self.assertEqual((ReceiptLine.objects.count(), ProcurementEvent.objects.count(), ProcurementAuditEntry.objects.count()), (8, 10, 10))
-        self.assertEqual((StockLocation.objects.count(), StockLot.objects.count(), ReceiptAllocation.objects.count()), (2, 2, 4))
+        self.assertEqual((Supplier.objects.count(), PurchaseOrder.objects.count(), GoodsReceipt.objects.count()), (4, 4, 8))
+        self.assertEqual((ReceiptLine.objects.count(), ProcurementEvent.objects.count(), ProcurementAuditEntry.objects.count()), (12, 20, 20))
+        self.assertEqual((StockLocation.objects.count(), StockLot.objects.count(), ReceiptAllocation.objects.count()), (4, 4, 8))
         self.assertEqual(StockLotEvent.objects.count(), InventoryLotAuditEntry.objects.count())
         for project in ("desktop", "mobile"):
             actor = str(accounts[f"fictional-{project}-procurement-journey"])
@@ -916,8 +927,8 @@ class OperatorBrowserTests(LiveServerTestCase):
                 else:
                     self.assertFalse(allocations.exists())
         print("PROCUREMENT_BROWSER_PERSISTENCE_PASS: 2 orders, 4 receipts, 8 receipt lines and stock movements; Procurement and Inventory Audit reconciled", flush=True)
-        self.assertEqual(StockReservation.objects.count(), 6)
-        self.assertEqual(ReservationAllocation.objects.count(), 6)
+        self.assertEqual(StockReservation.objects.count(), 8)
+        self.assertEqual(ReservationAllocation.objects.count(), 8)
         self.assertEqual(ReservationEvent.objects.count(), ReservationAuditEntry.objects.count())
         for project in ("desktop", "mobile"):
             actor = str(accounts[f"fictional-{project}-procurement-journey"])
@@ -928,3 +939,36 @@ class OperatorBrowserTests(LiveServerTestCase):
         for event in ReservationEvent.objects.all():
             self.assertTrue(ReservationAuditEntry.objects.filter(event_id=event.pk, actor_id=event.actor_id, action=event.action).exists())
         print("RESERVATION_BROWSER_PERSISTENCE_PASS: 6 reservations; 2 releases, 2 consumptions and 2 uncertain results; 2 physical exits/Audit; no duplicate writes",flush=True)
+
+        from inventory.models import PhysicalCount, PhysicalCountLine, PhysicalInventoryEvent, PhysicalLoss
+        from audit.models import PhysicalInventoryAuditEntry
+        self.assertEqual((PhysicalCount.objects.count(), PhysicalCountLine.objects.count(), PhysicalLoss.objects.count()),(2,2,2))
+        self.assertEqual((PhysicalInventoryEvent.objects.count(),PhysicalInventoryAuditEntry.objects.count()),(10,10))
+        for project in ("desktop", "mobile"):
+            variant=Variant.objects.get(sku=f"MEASURED-FIXTURE-{project}")
+            actor=str(accounts[f"fictional-{project}-measured-journey"])
+            position=StockPosition.objects.get(variant_id=variant.pk)
+            self.assertEqual((position.accounting_unit,position.on_hand,position.version),("G",899250,5))
+            movements=list(position.movements.order_by("sequence"))
+            self.assertEqual([(m.kind,m.delta,m.unit) for m in movements],[("RECEIPT",245001,"G"),("RECEIPT",754999,"G"),("CONSUMPTION",-100000,"G"),("COUNT",-500,"G"),("WRITE_OFF",-250,"G")])
+            balance=0
+            for movement in movements:
+                self.assertEqual(movement.quantity_before,balance)
+                balance+=movement.delta
+                audit=InventoryMovementAuditEntry.objects.get(movement_id=movement.pk)
+                self.assertEqual((movement.quantity_after,audit.actor_id,audit.unit,audit.delta,audit.quantity_after),(balance,actor,"G",movement.delta,balance))
+            self.assertEqual(StockLotBalance.objects.get(lot__variant_id=variant.pk).quantity,position.on_hand)
+            order=PurchaseOrder.objects.get(supplier__name=f"Fictional {project} Mass Supply")
+            line=order.lines.get()
+            self.assertEqual((order.status,line.unit,line.cost_basis,line.quantity,line.received_quantity),("COMPLETE","G","PER_KG",1000000,1000000))
+            self.assertEqual(set(order.receipts.values_list("lines__stock_movement_id",flat=True)),{m.pk for m in movements if m.kind=="RECEIPT"})
+            revision=VariantPriceRevision.objects.get(variant=variant)
+            self.assertEqual((str(revision.amount),revision.price_basis),("1000.00","PER_KG"))
+            self.assertEqual(CatalogPriceAuditEntry.objects.get(new_revision_id=revision.pk).actor_id,actor)
+            count=PhysicalCount.objects.get(responsible_actor_id=actor)
+            self.assertEqual((count.state,count.blind,count.lines.get().expected_quantity,count.lines.get().observed_quantity),("COMPLETED",True,900000,899500))
+            loss=PhysicalLoss.objects.get(actor_id=actor)
+            self.assertEqual((loss.quantity,loss.unit,loss.reason_code),(250,"G","DAMAGE"))
+        for event in PhysicalInventoryEvent.objects.all():
+            self.assertTrue(PhysicalInventoryAuditEntry.objects.filter(event_id=event.pk,actor_id=event.actor_id,action=event.action).exists())
+        print("MEASURED_BROWSER_PERSISTENCE_PASS: 2 mass orders, 4 partial receipts, 2 consumptions, 2 counts and 2 losses; 10 G movements/Audit reconciled exactly",flush=True)

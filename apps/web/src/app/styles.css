@@ -342,3 +342,8 @@ th { font-size: .75rem; color: var(--muted); background: var(--surface-inset); }
   .workspace-record-block, .workspace-edit-block { padding: .875rem; }
   .product-workspace .classification-grid > .workspace-edit-block:last-child { border: 1px solid var(--border); padding: .875rem; }
 }
+
+/* Physical count scopes remain keyboard and touch accessible. */
+.physical-inventory .proc-check { display: flex; align-items: center; gap: .5rem; min-height: 44px; }
+.physical-inventory .proc-check input { width: 24px; min-height: 24px; flex: 0 0 24px; }
+.physical-inventory code { overflow-wrap: anywhere; }

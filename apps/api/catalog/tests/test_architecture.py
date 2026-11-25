@@ -47,7 +47,7 @@ class CatalogModuleBoundaryTests(SimpleTestCase):
             "record_product_category_changed", "record_product_active_changed",
             "record_variant_price_set",
             "record_variant_measurement_spec_changed",
-            "record_inventory_movement", "record_inventory_lot_event", "record_reservation_event", "record_procurement_event",
+            "record_physical_inventory_event", "record_inventory_movement", "record_inventory_lot_event", "record_reservation_event", "record_procurement_event",
         })
 
     def test_explicit_imports_respect_model_ownership_and_dependency_direction(self) -> None:
@@ -92,7 +92,7 @@ class CatalogModuleBoundaryTests(SimpleTestCase):
                             owner in allowed_dependencies
                             and dependency not in allowed_dependencies[owner]
                         )
-                        transport_adapter = source.name == "http.py" or owner == "inventory" and source.name in {"lot_http.py", "reservation_http.py"}
+                        transport_adapter = source.name == "http.py" or owner == "inventory" and source.name in {"lot_http.py", "reservation_http.py", "count_http.py"}
                         if dependency == "system" and owner in {"identity", "catalog", "inventory", "procurement"} and not transport_adapter:
                             violations.append(f"{relative}:{node.lineno}: transport import outside adapter")
                         if imports_model or wrong_direction:

@@ -1,10 +1,12 @@
 "use client";
 
+import { validQuantity } from "@/lib/quantities";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useOperator } from "./operations-shell";
-import { OperatorError, request, Stock, validPositiveInteger } from "@/lib/operations-api";
+import { OperatorError, request, Stock } from "@/lib/operations-api";
 import { procurement, VariantReference } from "@/lib/procurement-api";
 import { Location, Lot, LotState, lots, validSignedQuantity } from "@/lib/lot-api";
+import { PhysicalInventoryPanel } from "./physical-inventory-panel";
 import { CommercialInventoryPanel } from "./commercial-inventory-panel";
 import { reservationApi } from "@/lib/reservation-api";
 
@@ -99,10 +101,10 @@ export function StockLotWorkspace() {
     catch (failure) { setError(failureText(failure)); }
   }
 
-  if (!can(cap.read)) return <div className="lot-workspace"><h1>Inventario</h1><CommercialInventoryPanel /><section className="panel"><h2>Inventario por lotes</h2><p>Tu cuenta no tiene permiso de lectura de lotes.</p></section></div>;
+  if (!can(cap.read)) return <div className="lot-workspace"><h1>Inventario</h1><CommercialInventoryPanel /><PhysicalInventoryPanel variantId="" locations={[]} state={null} /><section className="panel"><h2>Inventario por lotes</h2><p>Tu cuenta no tiene permiso de lectura de lotes.</p></section></div>;
   return <div className="lot-workspace">
     <header className="page-heading"><p className="eyebrow">Inventario · operación piloto</p><h1>Inventario por lotes</h1>
-      <p>Saldo físico EACH. La secuencia FEFO orienta la revisión del operador; no indica disponibilidad ni vendibilidad.</p></header>
+      <p>Saldo físico en unidades contables explícitas. La secuencia FEFO orienta la revisión del operador; no indica disponibilidad ni vendibilidad.</p></header>
     <CommercialInventoryPanel onChanged={async()=>{if(variantId)await refresh();}} />
     {error && <p role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     {blockKind === "uncertain" && <p role="alert">Escrituras pausadas: la operación pudo haberse guardado. Consultá el estado y verificá su trazabilidad antes de volver a escribir. Una lectura no confirma una escritura incierta.</p>}
@@ -121,18 +123,18 @@ export function StockLotWorkspace() {
     </section>
 
     {state && <section className="panel" aria-labelledby="lot-summary"><h2 id="lot-summary">Existencia registrada</h2>
-      <p><strong>{state.on_hand} EACH</strong> en StockPosition · <strong>{state.unallocated} EACH sin asignación</strong> a lote o ubicación.</p>
+      <p><strong>{state.on_hand} {state.unit ?? "EACH"}</strong> en StockPosition · <strong>{state.unallocated} {state.unit ?? "EACH"} sin asignación</strong> a lote o ubicación.</p>
       <p className="muted">El stock previo y las recepciones sin asignación conservan su origen no especificado. No se les atribuye lote retroactivamente.</p>
       {state.lots.some((item) => item.expired || item.status !== "ACTIVE") &&
         <p role="status">Alertas físicas: {state.lots.filter((item) => item.expired).length} vencidos · {state.lots.filter((item) => item.status === "BLOCKED").length} bloqueados · {state.lots.filter((item) => item.status === "QUARANTINE").length} en cuarentena.</p>}
       <h3>Orden FEFO de lotes elegibles</h3><ol>{state.fefo.map((id) => {
         const item = state.lots.find((candidate) => candidate.id === id)!;
-        return <li key={id}>{item.code} · vence {item.expires_on ?? "sin vencimiento"} · {item.quantity} EACH</li>;
+        return <li key={id}>{item.code} · vence {item.expires_on ?? "sin vencimiento"} · {item.quantity} {item.unit ?? "EACH"}</li>;
       })}</ol>{!state.fefo.length && <p>No hay lotes elegibles para sugerencia FEFO.</p>}
       {state.truncated && <p role="alert">Listado limitado. Revisá los lotes restantes antes de decidir.</p>}
-      <h3>Lotes y ubicaciones</h3><div className="table-wrap"><table><thead><tr><th>Lote</th><th>Estado</th><th>Vence</th><th>EACH</th><th>Ubicaciones</th></tr></thead>
+      <h3>Lotes y ubicaciones</h3><div className="table-wrap"><table><thead><tr><th>Lote</th><th>Estado</th><th>Vence</th><th>Cantidad</th><th>Ubicaciones</th></tr></thead>
         <tbody>{state.lots.map((item) => <tr key={item.id}><td data-label="Lote">{item.code}</td><td data-label="Estado">{item.expired ? "VENCIDO" : item.status}</td>
-          <td data-label="Vence">{item.expires_on ?? "No declarado"}</td><td data-label="EACH">{item.quantity}</td>
+          <td data-label="Vence">{item.expires_on ?? "No declarado"}</td><td data-label="EACH">{item.quantity} {item.unit ?? "EACH"}</td>
           <td data-label="Ubicaciones">{item.locations.map((entry) => `${entry.code}: ${entry.quantity}`).join(" · ") || "Sin asignación"}</td></tr>)}</tbody></table></div>
     </section>}
 
@@ -154,21 +156,22 @@ export function StockLotWorkspace() {
         <label htmlFor="new-lot-expiry">Vencimiento, si corresponde</label><input id="new-lot-expiry" type="date" value={expiry} onChange={(event) => setExpiry(event.target.value)} />
         <button className="button-primary" disabled={busy || blocked}>Crear lote</button></form></section>}
 
+    <PhysicalInventoryPanel variantId={variantId} locations={locations} state={state} onChanged={async()=>{if(variantId)await refresh();}} />
     {state && <section className="panel"><h2>Movimiento o corrección</h2>
       <label htmlFor="active-lot">Lote</label><select id="active-lot" value={selectedLot} onChange={(event) => setSelectedLot(event.target.value)}>
         <option value="">Seleccioná un lote</option>{state.lots.map((item) => <option key={item.id} value={item.id}>{item.code} · revisión {item.version}</option>)}</select>
       {lot && <><label htmlFor="lot-reason">Motivo documentado</label><input id="lot-reason" value={reason} maxLength={255} onChange={(event) => setReason(event.target.value)} />
         <label htmlFor="lot-location">Ubicación origen o a corregir</label><select id="lot-location" value={locationId} onChange={(event) => setLocationId(event.target.value)}>
           <option value="">Seleccioná ubicación</option>{locations.map((item) => <option key={item.id} value={item.id}>{item.code}</option>)}</select>
-        <label htmlFor="lot-quantity">Cantidad EACH (signo para corrección)</label><input id="lot-quantity" value={quantity} inputMode="numeric" onChange={(event) => setQuantity(event.target.value)} />
+        <label htmlFor="lot-quantity">Cantidad {lot.unit ?? "EACH"} (signo para corrección)</label><input id="lot-quantity" value={quantity} inputMode="numeric" onChange={(event) => setQuantity(event.target.value)} />
         {can(cap.lot) && <><label htmlFor="lot-status">Estado del lote</label><select id="lot-status" value={lotStatus} onChange={(event) => setLotStatus(event.target.value as Lot["status"])}>
           <option value="ACTIVE">Activo</option><option value="BLOCKED">Bloqueado</option><option value="QUARANTINE">Cuarentena</option></select>
           <button type="button" disabled={busy || blocked || !reason.trim()} onClick={() => void write(() => lots.status(lot, lotStatus, reason), "Estado del lote registrado.")}>Guardar estado</button></>}
         {can(cap.transfer) && <><label htmlFor="lot-destination">Ubicación destino</label><select id="lot-destination" value={destinationId} onChange={(event) => setDestinationId(event.target.value)}>
           <option value="">Seleccioná ubicación</option>{locations.map((item) => <option key={item.id} value={item.id}>{item.code}</option>)}</select>
-          <button type="button" disabled={busy || blocked || !reason.trim() || !locationId || !destinationId || !validPositiveInteger(quantity)}
+          <button type="button" disabled={busy || blocked || !reason.trim() || !locationId || !destinationId || !validQuantity(quantity, lot.unit ?? "EACH", true)}
             onClick={() => void write(() => lots.transfer(lot, locationId, destinationId, quantity, reason), "Traslado registrado.")}>Trasladar lote</button></>}
-        {can(cap.correct) && <button type="button" disabled={busy || blocked || !stock || !reason.trim() || !locationId || !validSignedQuantity(quantity)}
+        {can(cap.correct) && <button type="button" disabled={busy || blocked || !stock || !reason.trim() || !locationId || !validSignedQuantity(quantity, lot.unit ?? "EACH")}
           onClick={() => void write(() => lots.correct(lot, locationId, quantity, stock!.version, reason), "Corrección auditada registrada.")}>Corregir cantidad</button>}
       </>}
     </section>}

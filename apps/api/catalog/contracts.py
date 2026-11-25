@@ -7,6 +7,7 @@ from uuid import UUID
 
 class PriceBasis(Enum):
     PER_VARIANT = "PER_VARIANT"
+    PER_KG = "PER_KG"
 
 
 @dataclass(frozen=True)

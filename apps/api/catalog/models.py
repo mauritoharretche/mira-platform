@@ -94,7 +94,7 @@ class VariantPriceRevision(models.Model):
                 condition=models.Q(currency="ARS"), name="catalog_price_currency_ars",
             ),
             models.CheckConstraint(
-                condition=models.Q(price_basis=PriceBasis.PER_VARIANT.value),
+                condition=models.Q(price_basis__in=[PriceBasis.PER_VARIANT.value, PriceBasis.PER_KG.value]),
                 name="catalog_price_basis_valid",
             ),
         ]

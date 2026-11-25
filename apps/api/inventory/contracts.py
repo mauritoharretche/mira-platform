@@ -9,12 +9,15 @@ MAX_STOCK_INTEGER = 2**63 - 1
 
 class InventoryUnit(Enum):
     EACH = "EACH"
+    G = "G"
 
 
 class StockMovementKind(Enum):
     RECEIPT = "RECEIPT"
     ADJUSTMENT = "ADJUSTMENT"
     CONSUMPTION = "CONSUMPTION"
+    COUNT = "COUNT"
+    WRITE_OFF = "WRITE_OFF"
 
 
 class InventoryValidationError(ValueError):
@@ -69,6 +72,7 @@ class StockReceiptResult:
 class ReservationLine:
     variant_id: UUID
     quantity: int
+    unit: InventoryUnit = InventoryUnit.EACH
 
 
 @dataclass(frozen=True)
@@ -98,3 +102,4 @@ class AvailabilitySnapshot:
     available: int
     safety_stock: int
     balances: tuple[PhysicalAvailability, ...]
+    unit: InventoryUnit | None = None

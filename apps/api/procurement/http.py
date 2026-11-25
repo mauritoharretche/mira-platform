@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from identity.application import require_capability
 from identity.contracts import Capability, AccessDenied, AuthenticationRequired
 from inventory.contracts import InventoryValidationError, InventoryVariantNotFoundError
+from inventory.quantities import parse_quantity
 from system.http import OperatorAPIView, StrictSerializer, StrictTextField, error_response
 
 from . import application
@@ -63,17 +64,16 @@ class SupplierUpdateInput(SupplierCreateInput):
 
 class OrderLineInput(StrictSerializer):
     variant_id = serializers.UUIDField()
-    quantity = StrictTextField(max_length=19, trim_whitespace=False)
+    quantity = StrictTextField(max_length=30, trim_whitespace=False)
     unit = StrictTextField(max_length=8, trim_whitespace=False)
     unit_cost_ars = StrictTextField(max_length=15, trim_whitespace=False)
 
-    def validate_quantity(self, value):
-        return _positive(value)
+    cost_basis = StrictTextField(required=False, default="PER_VARIANT")
 
-    def validate_unit(self, value):
-        if value != "EACH":
-            raise serializers.ValidationError("Explicit EACH is required.")
-        return value
+    def validate(self, attrs):
+        try: attrs["quantity"] = parse_quantity(attrs["quantity"], attrs["unit"], positive=True)
+        except InventoryValidationError: raise serializers.ValidationError("Exact quantity/unit required") from None
+        return attrs
 
     def validate_unit_cost_ars(self, value):
         if not _COST.fullmatch(value):
@@ -103,25 +103,30 @@ class ConfirmInput(StrictSerializer):
 class ReceiptAllocationInput(StrictSerializer):
     lot_id = serializers.UUIDField()
     location_id = serializers.UUIDField()
-    quantity = StrictTextField(max_length=19, trim_whitespace=False)
+    quantity = StrictTextField(max_length=30, trim_whitespace=False)
 
     def validate_quantity(self, value):
-        return _positive(value)
+        return value
 
 
 class ReceiptLineInput(StrictSerializer):
+    unit = StrictTextField(required=False, default="EACH")
     order_line_id = serializers.UUIDField()
-    delivered_quantity = StrictTextField(max_length=19, trim_whitespace=False)
-    accepted_quantity = StrictTextField(max_length=19, trim_whitespace=False)
+    delivered_quantity = StrictTextField(max_length=30, trim_whitespace=False)
+    accepted_quantity = StrictTextField(max_length=30, trim_whitespace=False)
     difference_reason = StrictTextField(max_length=255, allow_null=True, trim_whitespace=False)
     expected_stock_version = StrictTextField(max_length=19, allow_null=True, trim_whitespace=False)
     allocations = ReceiptAllocationInput(many=True, required=False, allow_empty=False)
 
-    def validate_delivered_quantity(self, value):
-        return _positive(value)
-
-    def validate_accepted_quantity(self, value):
-        return _nonnegative(value)
+    def validate(self, attrs):
+        try:
+            attrs["delivered_quantity"] = parse_quantity(attrs["delivered_quantity"], attrs["unit"], positive=True)
+            attrs["accepted_quantity"] = parse_quantity(attrs["accepted_quantity"], attrs["unit"])
+            for item in attrs.get("allocations", []):
+                item["quantity"] = parse_quantity(item["quantity"], attrs["unit"], positive=True)
+        except InventoryValidationError:
+            raise serializers.ValidationError("Exact matching receipt quantities required") from None
+        return attrs
 
     def validate_expected_stock_version(self, value):
         return _positive(value) if value is not None else None

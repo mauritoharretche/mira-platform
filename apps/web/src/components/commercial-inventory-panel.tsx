@@ -1,5 +1,6 @@
 "use client";
 
+import { AccountingUnit, convertMass } from "@/lib/quantities";
 import { FormEvent, useRef, useState } from "react";
 import { useOperator } from "./operations-shell";
 import { OperatorError, request, Stock } from "@/lib/operations-api";
@@ -32,6 +33,8 @@ export function CommercialInventoryPanel({onChanged}: {onChanged?: () => Promise
   const [lotId,setLotId] = useState("");
   const [locationId,setLocationId] = useState("");
   const [evidence,setEvidence] = useState("");
+  const [stockUnit,setStockUnit] = useState<AccountingUnit>("EACH");
+  const [draftUnit,setDraftUnit] = useState<AccountingUnit>("EACH");
   const [stockVersion,setStockVersion] = useState<string | null>(null);
   const generation=useRef(0);
   const inFlight=useRef(false);
@@ -84,7 +87,7 @@ export function CommercialInventoryPanel({onChanged}: {onChanged?: () => Promise
       const [state,places,stock]=await Promise.all([lots.state(variantId),lots.locations(),
         request<{stock:Stock|null}>(`/inventory/variants/${variantId}/stock`)]);
       if(token===generation.current) {
-        setLotOptions(state.lots);setLocations(places.locations);setStockVersion(stock.stock?.version ?? null);
+        setLotOptions(state.lots);setLocations(places.locations);setStockVersion(stock.stock?.version ?? null);setStockUnit(stock.stock?.unit ?? "EACH");
       }
     } catch {readFailure();}
   }
@@ -111,19 +114,20 @@ export function CommercialInventoryPanel({onChanged}: {onChanged?: () => Promise
     {availability&&<><dl className="commercial-summary">
       {[["Físico",availability.physical],["Asignado a lotes",availability.allocated],["Sin asignar",availability.unallocated],
         ["Elegible",availability.eligible],["Reservado",availability.reserved],["No disponible",availability.unavailable],["Disponible para reservar",availability.available]]
-        .map(([name,value])=><div key={name}><dt>{name}</dt><dd>{value} EACH</dd></div>)}
-    </dl><p className="caption">Stock de seguridad explícito: {availability.safety_stock} EACH. Corte de consulta: {availability.as_of}. Los vencimientos de reservas se aplican aunque no haya limpieza programada.</p>
+        .map(([name,value])=><div key={name}><dt>{name}</dt><dd>{value} {availability.unit ?? "EACH"}</dd></div>)}
+    </dl><p className="caption">Stock de seguridad explícito: {availability.safety_stock} {availability.unit ?? "EACH"}. Corte de consulta: {availability.as_of}. Los vencimientos de reservas se aplican aunque no haya limpieza programada.</p>
       <div className="table-wrap"><table><caption>Disponibilidad por lote y ubicación</caption><thead><tr><th>Lote</th><th>Ubicación</th><th>Físico</th><th>Elegible</th><th>Reservado</th><th>Disponible</th></tr></thead>
         <tbody>{availability.balances.map((b)=><tr key={b.balance_id}><td data-label="Lote">{b.lot_code}</td><td data-label="Ubicación">{b.location_code}</td><td data-label="Físico">{b.physical}</td><td data-label="Elegible">{b.eligible?"Sí":"No"}</td><td data-label="Reservado">{b.reserved}</td><td data-label="Disponible">{b.available}</td></tr>)}</tbody></table></div></>}
+    {availability?.unit === "G" && <p className="caption">Equivalente exacto: {convertMass(availability.physical,"G","KG")} KG físicos.</p>}
     {blocked&&<div className="workspace-edit-block"><p role="alert">Escrituras pausadas. Identidad: <code>{operationId}</code></p>
       {blocked==="uncertain"&&can("read_reservation")&&<button type="button" onClick={()=>void recover()}>Consultar resultado de operación</button>}
       {blocked==="conflict"&&reviewed&&<button type="button" onClick={()=>{setBlocked(null);setReviewed(false);}}>Editar sobre el estado consultado</button>}</div>}
     {can("reserve_stock")&&<form onSubmit={(event)=>{event.preventDefault();if(!draft.length||draft.some((l)=>!validReservationLine(l))||!expires)return;
       void write((id)=>reservationApi.create(id,source,reference,new Date(expires).toISOString(),draft),"Reserva registrada.");}}>
-      <h3>Nueva reserva · borrador</h3><label htmlFor="reserve-quantity">Cantidad a reservar EACH</label><input id="reserve-quantity" value={quantity} inputMode="numeric" onChange={(event)=>setQuantity(event.target.value)}/>
-      <button type="button" disabled={busy||!variantId||!validReservationLine({variant_id:variantId,quantity,label})}
-        onClick={()=>setDraft((old)=>[...old.filter((line)=>line.variant_id!==variantId),{variant_id:variantId,quantity,label}])}>Agregar variante a reserva</button>
-      <ul>{draft.map((line)=><li key={line.variant_id}>{line.label} · {line.quantity} EACH <button type="button" disabled={busy} onClick={()=>setDraft((old)=>old.filter((l)=>l.variant_id!==line.variant_id))}>Quitar de reserva</button></li>)}</ul>
+      <h3>Nueva reserva · borrador</h3><label htmlFor="reserve-unit">Unidad de reserva</label><select id="reserve-unit" value={availability?.unit ?? draftUnit} disabled={Boolean(availability?.unit)} onChange={(event)=>setDraftUnit(event.target.value as AccountingUnit)}><option value="EACH">EACH</option><option value="G">G</option></select><label htmlFor="reserve-quantity">Cantidad a reservar {availability?.unit ?? draftUnit}</label><input id="reserve-quantity" value={quantity} inputMode="numeric" onChange={(event)=>setQuantity(event.target.value)}/>
+      <button type="button" disabled={busy||!variantId||!validReservationLine({variant_id:variantId,quantity,label,unit:availability?.unit ?? draftUnit})}
+        onClick={()=>setDraft((old)=>[...old.filter((line)=>line.variant_id!==variantId),{variant_id:variantId,quantity,label,unit:availability?.unit ?? draftUnit}])}>Agregar variante a reserva</button>
+      <ul>{draft.map((line)=><li key={line.variant_id}>{line.label} · {line.quantity} {line.unit ?? "EACH"} <button type="button" disabled={busy} onClick={()=>setDraft((old)=>old.filter((l)=>l.variant_id!==line.variant_id))}>Quitar de reserva</button></li>)}</ul>
       <label htmlFor="reserve-source">Origen de reserva</label><input id="reserve-source" value={source} maxLength={40} required onChange={(event)=>setSource(event.target.value)}/>
       <label htmlFor="reserve-reference">Referencia ficticia</label><input id="reserve-reference" value={reference} maxLength={120} required onChange={(event)=>setReference(event.target.value)}/>
       <label htmlFor="reserve-expiry">Vencimiento de reserva (hora local)</label><input id="reserve-expiry" type="datetime-local" value={expires} required onChange={(event)=>setExpires(event.target.value)}/>
@@ -132,19 +136,19 @@ export function CommercialInventoryPanel({onChanged}: {onChanged?: () => Promise
       onClick={()=>{const token=generation.current;void reservationApi.read(r.id).then((result)=>{if(token===generation.current)setSelected(result);}).catch(readFailure);}}>{r.reference} · {r.effective_state} · vence {r.expires_at}</button></li>)}</ul>
       {selected&&<article className="workspace-record-block" aria-labelledby="reservation-detail"><h3 id="reservation-detail">Detalle de reserva</h3>
         <p className="identifier">{selected.id}</p><p>Estado efectivo: <strong>{selected.effective_state}</strong> · origen {selected.source} · {selected.reference}</p>
-        <p>Creada {selected.created_at} · vence {selected.expires_at}</p><ul>{selected.allocations.map((a)=><li key={a.id}>{a.lot_code} · {a.location_code}: {a.quantity} EACH{a.stock_movement_id&&<> · movimiento {a.stock_movement_id}</>}</li>)}</ul>
+        <p>Creada {selected.created_at} · vence {selected.expires_at}</p><ul>{selected.allocations.map((a)=><li key={a.id}>{a.lot_code} · {a.location_code}: {a.quantity} {a.unit ?? "EACH"}{a.stock_movement_id&&<> · movimiento {a.stock_movement_id}</>}</li>)}</ul>
         <ol>{selected.history.map((e,i)=><li key={i}>{e.action} · {e.at}</li>)}</ol>
         {([ ["release","release_reservation","Liberar reserva"],["expire","expire_reservation","Expirar reserva"],["consume","consume_reservation","Consumir reserva"] ] as const).map(([action,capability,text])=>
           can(capability)&&<button key={action} type="button" disabled={busy||Boolean(blocked)||selected.effective_state!=="ACTIVE"&&action!=="expire"}
             onClick={()=>void write((id)=>reservationApi.transition(selected.id,action,id),"Operación registrada.")}>{text}</button>)}
       </article>}</>}
     {can("classify_stock")&&can("read_stock_lots")&&can("read_stock")&&variantId&&<form onSubmit={(event)=>{event.preventDefault();
-      void write((id)=>reservationApi.classify({operation_id:id,lot_id:lotId,location_id:locationId,quantity,expected_stock_version:stockVersion,evidence}),"Conteo verificado clasificado sin aumentar el stock físico.");}}>
+      void write((id)=>reservationApi.classify({operation_id:id,lot_id:lotId,location_id:locationId,quantity,expected_stock_version:stockVersion,evidence,unit:stockUnit}),"Conteo verificado clasificado sin aumentar el stock físico.");}}>
       <h3>Conciliar stock sin asignación</h3><p>Verificá físicamente cantidad, etiqueta de lote y ubicación. No inventes proveedor ni recepción histórica.</p>
       <button type="button" disabled={busy} onClick={()=>void classificationOptions()}>Consultar datos para conciliación</button>
       <label htmlFor="classify-lot">Lote verificado</label><select id="classify-lot" value={lotId} required onChange={(event)=>setLotId(event.target.value)}><option value="">Seleccioná lote</option>{lotOptions.map((l)=><option key={l.id} value={l.id}>{l.code}</option>)}</select>
       <label htmlFor="classify-location">Ubicación verificada</label><select id="classify-location" value={locationId} required onChange={(event)=>setLocationId(event.target.value)}><option value="">Seleccioná ubicación</option>{locations.map((l)=><option key={l.id} value={l.id}>{l.code}</option>)}</select>
-      <label htmlFor="classify-quantity">Cantidad verificada EACH</label><input id="classify-quantity" value={quantity} inputMode="numeric" required onChange={(event)=>setQuantity(event.target.value)}/>
+      <label htmlFor="classify-quantity">Cantidad verificada {stockUnit}</label><input id="classify-quantity" value={quantity} inputMode="numeric" required onChange={(event)=>setQuantity(event.target.value)}/>
       <label htmlFor="classify-evidence">Evidencia de verificación física</label><input id="classify-evidence" value={evidence} maxLength={255} required onChange={(event)=>setEvidence(event.target.value)}/>
       <button disabled={busy||Boolean(blocked)||!stockVersion}>Clasificar stock verificado</button></form>}
   </section>;

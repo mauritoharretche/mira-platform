@@ -10,7 +10,20 @@ from .contracts import (CatalogAuditAction, CatalogChangeAuditAction, CatalogMea
                         CatalogPriceAuditAction, InventoryMovementAuditAction, ProcurementAuditAction)
 from .models import (CatalogAuditEntry, CatalogChangeAuditEntry, CatalogMeasurementAuditEntry,
                      CatalogPriceAuditEntry, InventoryMovementAuditEntry, ProcurementAuditEntry,
-                     InventoryLotAuditEntry, ReservationAuditEntry)
+                     InventoryLotAuditEntry, ReservationAuditEntry, PhysicalInventoryAuditEntry)
+
+
+def record_physical_inventory_event(*, actor: ActorContext, event_id: UUID, count_id: UUID | None, loss_id: UUID | None, action: str) -> UUID:
+    if not transaction.get_connection("default").in_atomic_block:
+        raise TransactionManagementError("Audit requires caller transaction")
+    if not isinstance(actor, ActorContext) or not isinstance(actor.actor_id, str) or not actor.actor_id.strip() or len(actor.actor_id) > 128:
+        raise ValueError("Trusted actor required")
+    if not isinstance(event_id, UUID) or any(x is not None and not isinstance(x, UUID) for x in (count_id, loss_id)):
+        raise ValueError("UUID references required")
+    if action not in {"count.created", "count.observed", "count.reviewed", "count.completed", "loss.recorded"}:
+        raise ValueError("Unknown physical event")
+    return PhysicalInventoryAuditEntry.objects.using("default").create(actor_id=actor.actor_id, event_id=event_id,
+        count_id=count_id, loss_id=loss_id, action=action).pk
 
 
 def record_reservation_event(*, actor: ActorContext, event_id: UUID, reservation_id: UUID | None, action: str) -> UUID:
@@ -119,7 +132,7 @@ def record_inventory_movement(
     if not all(isinstance(value, UUID) for value in (variant_id, position_id, movement_id)):
         raise ValueError("UUID references required")
     maximum = 2**63 - 1
-    if type(sequence) is not int or not 1 <= sequence <= maximum or type(unit) is not str or unit != "EACH":
+    if type(sequence) is not int or not 1 <= sequence <= maximum or type(unit) is not str or unit not in ("EACH", "G"):
         raise ValueError("Invalid inventory sequence or unit")
     if any(type(value) is not int or not 0 <= value <= maximum for value in (quantity_before, quantity_after)):
         raise ValueError("Invalid inventory quantity")
@@ -129,7 +142,7 @@ def record_inventory_movement(
         raise ValueError("Inventory quantities do not reconcile")
     if action is InventoryMovementAuditAction.STOCK_RECEIVED and delta <= 0:
         raise ValueError("A receipt must be positive")
-    if action is InventoryMovementAuditAction.STOCK_CONSUMED and delta >= 0:
+    if action in (InventoryMovementAuditAction.STOCK_CONSUMED, InventoryMovementAuditAction.STOCK_WRITTEN_OFF) and delta >= 0:
         raise ValueError("A consumption must be negative")
     if sequence == 1 and (quantity_before != 0 or action is not InventoryMovementAuditAction.STOCK_RECEIVED):
         raise ValueError("Initial inventory attribution requires a receipt from zero")
@@ -280,7 +293,7 @@ def record_variant_price_set(
     *, actor: ActorContext, variant_id: UUID,
     previous_revision_id: UUID | None, new_revision_id: UUID,
     previous_amount: Decimal | None, new_amount: Decimal,
-    currency: str, price_basis: str,
+    currency: str, price_basis: str, previous_price_basis: str | None = None,
 ) -> UUID:
     """Append attribution to the caller's transaction, without authenticating it.
 
@@ -295,24 +308,25 @@ def record_variant_price_set(
         raise ValueError("Invalid actor identifier")
     if not isinstance(variant_id, UUID) or not isinstance(new_revision_id, UUID):
         raise ValueError("UUID references required")
-    if currency != "ARS" or price_basis != "PER_VARIANT":
+    if currency != "ARS" or price_basis not in ("PER_VARIANT", "PER_KG") or previous_price_basis not in (None, "PER_VARIANT", "PER_KG"):
         raise ValueError("Unsupported audit currency or price basis")
     normalized_new = _normalize_audit_price(new_amount)
     normalized_previous = None
     if previous_revision_id is None:
-        if previous_amount is not None:
-            raise ValueError("Previous revision and amount must both be absent")
+        if previous_amount is not None or previous_price_basis is not None:
+            raise ValueError("Previous revision, amount and basis must all be absent")
     else:
         if not isinstance(previous_revision_id, UUID) or previous_revision_id == new_revision_id:
             raise ValueError("Distinct UUID revision references required")
         normalized_previous = _normalize_audit_price(previous_amount)
-        if normalized_previous == normalized_new:
+        if previous_price_basis is None: previous_price_basis = "PER_VARIANT"
+        if normalized_previous == normalized_new and previous_price_basis == price_basis:
             raise ValueError("A price change requires distinct amounts")
 
     entry = CatalogPriceAuditEntry.objects.using("default").create(
         actor_id=actor.actor_id, action=CatalogPriceAuditAction.VARIANT_PRICE_SET.value,
         variant_id=variant_id, previous_revision_id=previous_revision_id,
         new_revision_id=new_revision_id, previous_amount=normalized_previous,
-        new_amount=normalized_new, currency=currency, price_basis=price_basis, result="success",
+        new_amount=normalized_new, currency=currency, price_basis=price_basis, previous_price_basis=previous_price_basis, result="success",
     )
     return entry.id

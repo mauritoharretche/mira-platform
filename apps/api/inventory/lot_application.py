@@ -5,6 +5,7 @@ assignment is reported as unallocated; no provenance is invented or backfilled.
 """
 
 from datetime import date, datetime
+from decimal import Decimal
 from uuid import UUID
 
 from django.db import IntegrityError, transaction
@@ -17,7 +18,7 @@ from identity import application as identity_application
 from identity.contracts import Capability
 
 from .application import adjust_stock, _quantity
-from .contracts import InventoryValidationError, InventoryVariantNotFoundError, StockConflictError, StockNotInitializedError
+from .contracts import InventoryUnit, InventoryValidationError, InventoryVariantNotFoundError, StockConflictError, StockNotInitializedError
 from .models import StockLocation, StockLot, StockLotBalance, StockLotEvent, StockMovement, StockPosition
 from .locking import inventory_transaction, lock_inventory
 
@@ -181,7 +182,7 @@ def allocate_purchase_receipt(*, principal, variant_id, movement_id, allocations
 
 
 @inventory_transaction
-def transfer_lot(*, principal, lot_id, source_id, destination_id, quantity, expected_version, reason):
+def transfer_lot(*, principal, lot_id, source_id, destination_id, quantity, expected_version, reason, unit=InventoryUnit.EACH):
     actor = identity_application.require_capability(principal=principal, capability=Capability.TRANSFER_STOCK_LOTS)
     quantity = _quantity(quantity, positive=True)
     reason = _text(reason, 255)
@@ -193,6 +194,9 @@ def transfer_lot(*, principal, lot_id, source_id, destination_id, quantity, expe
             raise StockConflictError("Lot changed")
         if lot.version == 2**63 - 1:
             raise InventoryValidationError("Lot version exhausted")
+        position = StockPosition.objects.using("default").filter(variant_id=lot.variant_id).first()
+        if position is None or not isinstance(unit, InventoryUnit) or position.accounting_unit != unit.value:
+            raise InventoryValidationError("Matching accounting unit required")
         source, destination = _location(source_id), _location(destination_id)
         prior = _balance(lot, source)
         if prior is None or prior.quantity < quantity:
@@ -213,10 +217,10 @@ def transfer_lot(*, principal, lot_id, source_id, destination_id, quantity, expe
 
 
 @inventory_transaction
-def correct_lot(*, principal, lot_id, location_id, delta, expected_lot_version, expected_stock_version, reason):
+def correct_lot(*, principal, lot_id, location_id, delta, expected_lot_version, expected_stock_version, reason, unit=InventoryUnit.EACH):
     actor = identity_application.require_capability(principal=principal, capability=Capability.CORRECT_STOCK_LOTS)
     if type(delta) is not int or delta == 0 or abs(delta) > 2**63 - 1:
-        raise InventoryValidationError("Nonzero EACH correction required")
+        raise InventoryValidationError("Nonzero exact base-unit correction required")
     reason = _text(reason, 255)
     if (type(expected_lot_version) is not int or not 1 <= expected_lot_version <= 2**63 - 1
             or type(expected_stock_version) is not int or not 1 <= expected_stock_version <= 2**63 - 1):
@@ -227,6 +231,8 @@ def correct_lot(*, principal, lot_id, location_id, delta, expected_lot_version, 
         if position is None:
             raise StockNotInitializedError("Stock not initialized")
         lot = _lot(lot_id, lock=True)
+        if not isinstance(unit, InventoryUnit) or position.accounting_unit != unit.value:
+            raise InventoryValidationError("Matching accounting unit required")
         if lot.version != expected_lot_version or position.version != expected_stock_version:
             raise StockConflictError("Lot or stock changed")
         if lot.version == 2**63 - 1:
@@ -244,7 +250,7 @@ def correct_lot(*, principal, lot_id, location_id, delta, expected_lot_version, 
             balance.quantity += delta
             balance.save(using="default", update_fields=["quantity"])
         snapshot = adjust_stock(principal=principal, variant_id=lot.variant_id, new_on_hand=new_stock,
-                                reason=reason, expected_version=expected_stock_version)
+                                reason=reason, expected_version=expected_stock_version, unit=unit)
         if delta > 0:
             balance.quantity = _quantity(balance.quantity + delta)
             balance.save(using="default", update_fields=["quantity"])
@@ -269,20 +275,24 @@ def list_lots(*, principal, variant_id):
         raise InventoryVariantNotFoundError("Variant not found")
     today = timezone.localdate()
     lots = StockLot.objects.using("default").filter(variant_id=variant_id).order_by("expires_on", "code", "id")[:101]
+    position = StockPosition.objects.using("default").filter(variant_id=variant_id).first()
+    accounting = InventoryUnit(position.accounting_unit) if position else InventoryUnit.EACH
+    from .quantities import format_quantity
     rows = []
     for lot in lots:
         balances = tuple(lot.balances.select_related("location").order_by("location__code"))
         rows.append({"id": str(lot.pk), "code": lot.code, "expires_on": lot.expires_on.isoformat() if lot.expires_on else None,
                      "status": lot.status, "expired": lot.expires_on is not None and lot.expires_on < today,
-                     "version": str(lot.version), "quantity": str(sum(item.quantity for item in balances)),
-                     "locations": [{"id": str(item.location_id), "code": item.location.code,
-                                    "quantity": str(item.quantity)} for item in balances if item.quantity]})
+                     "version": str(lot.version), "quantity": format_quantity(sum(item.quantity for item in balances), accounting),
+                     "unit": accounting.value if position else None,
+                     "locations": [{"id": str(item.location_id), "balance_id": str(item.pk), "code": item.location.code,
+                                    "quantity": format_quantity(item.quantity, accounting)} for item in balances if item.quantity]})
     position = StockPosition.objects.using("default").filter(variant_id=variant_id).first()
     on_hand = position.on_hand if position else 0
     unallocated = on_hand - allocated_total(variant_id)
     if unallocated < 0:
         raise StockConflictError("Physical allocation exceeds stock")
-    eligible = sorted((row for row in rows if row["status"] == "ACTIVE" and not row["expired"] and int(row["quantity"]) > 0),
+    eligible = sorted((row for row in rows if row["status"] == "ACTIVE" and not row["expired"] and Decimal(row["quantity"]) > 0),
                       key=lambda row: (row["expires_on"] is None, row["expires_on"] or "", row["code"], row["id"]))
-    return {"on_hand": str(on_hand), "unallocated": str(unallocated), "lots": rows,
+    return {"on_hand": format_quantity(on_hand, accounting), "unallocated": format_quantity(unallocated, accounting), "unit": accounting.value if position else None, "lots": rows,
             "fefo": [row["id"] for row in eligible], "truncated": len(rows) > 100}
