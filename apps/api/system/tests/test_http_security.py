@@ -93,6 +93,7 @@ assert connection.settings_dict["TEST"]["NAME"] == "test_mira"
 assert connection.connection is None
 paths = ["auth/csrf", "auth/login", "auth/session", "auth/logout", "catalog/products", "catalog/products/invalid",
          "inventory/variants/invalid/initial-receipt", "inventory/variants/invalid/adjustments", "inventory/variants/invalid/stock", "inventory/variants/invalid/movements",
+         "inventory/variants/invalid/availability", "inventory/reservations", "inventory/reservations/invalid", "inventory/reservations/invalid/release", "inventory/reservations/invalid/expire", "inventory/reservations/invalid/consume", "inventory/operations/invalid", "inventory/classifications", "inventory/locations/invalid/eligibility",
          "inventory/locations", "inventory/variants/invalid/lots", "inventory/lots/invalid/status",
          "inventory/lots/invalid/transfer", "inventory/lots/invalid/correction",
          "catalog/categories", "catalog/products/invalid/category", "catalog/products/invalid/active", "catalog/products/invalid/variants",
@@ -109,6 +110,8 @@ with ExitStack() as stack:
                "django.contrib.auth.middleware.AuthenticationMiddleware.process_request",
                "django.contrib.auth.forms.authenticate", "catalog.application.create_product_with_initial_variant",
                "inventory.application.receive_stock", "inventory.application.adjust_stock", "catalog.application.list_products", "catalog.application.list_category_page",
+               "inventory.reservations.create_reservation", "inventory.reservations.transition_reservation",
+               "inventory.reservations.classify_stock", "inventory.reservations.query_availability",
                "inventory.lot_application.create_location", "inventory.lot_application.create_lot",
                "inventory.lot_application.set_lot_status", "inventory.lot_application.transfer_lot",
                "inventory.lot_application.correct_lot", "inventory.lot_application.list_lots",
@@ -135,7 +138,7 @@ print(json.dumps({"rejected_requests": len(paths) * 2, "connections_opened": 0, 
         process = subprocess.run([sys.executable, "-B", "-c", worker], cwd=settings.BASE_DIR, env=env,
                                  capture_output=True, text=True, timeout=20)
         self.assertEqual(process.returncode, 0, "Independent-process isolation regression failed")
-        self.assertEqual(json.loads(process.stdout), {"rejected_requests": 60, "connections_opened": 0, "session_auth_business_calls": 0})
+        self.assertEqual(json.loads(process.stdout), {"rejected_requests": 78, "connections_opened": 0, "session_auth_business_calls": 0})
 
     def test_operator_is_disabled_in_base_and_all_endpoints_fail_closed_when_disabled(self):
         fake = {"DJANGO_SECRET_KEY": "fictional-settings-check", "POSTGRES_DB": "mira", "POSTGRES_USER": "fictional", "POSTGRES_PASSWORD": "fictional-settings-check"}
@@ -147,7 +150,8 @@ print(json.dumps({"rejected_requests": len(paths) * 2, "connections_opened": 0, 
         with override_settings(OPERATOR_HTTP_ENABLED=False):
             for path in ("auth/csrf", "auth/login", "auth/session", "auth/logout", "catalog/products", "catalog/products/invalid",
                          "inventory/variants/invalid/stock", "inventory/variants/invalid/movements", "inventory/variants/invalid/initial-receipt", "inventory/variants/invalid/adjustments",
-                         "inventory/locations", "inventory/variants/invalid/lots", "inventory/lots/invalid/status",
+                         "inventory/variants/invalid/availability", "inventory/reservations", "inventory/reservations/invalid", "inventory/reservations/invalid/release", "inventory/reservations/invalid/expire", "inventory/reservations/invalid/consume", "inventory/operations/invalid", "inventory/classifications", "inventory/locations/invalid/eligibility",
+         "inventory/locations", "inventory/variants/invalid/lots", "inventory/lots/invalid/status",
                          "inventory/lots/invalid/transfer", "inventory/lots/invalid/correction",
                          "catalog/categories", "catalog/products/invalid/category", "catalog/products/invalid/active", "catalog/products/invalid/variants",
                          "catalog/variants/invalid/price", "catalog/variants/invalid/price/revisions",

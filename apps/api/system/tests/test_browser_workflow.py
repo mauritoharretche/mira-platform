@@ -35,6 +35,8 @@ from procurement.models import GoodsReceipt, ProcurementEvent, PurchaseOrder, Re
 from audit.models import ProcurementAuditEntry, InventoryLotAuditEntry
 from inventory.models import StockLocation, StockLot, StockLotBalance, StockLotEvent
 from procurement.models import ReceiptAllocation
+from inventory.models import StockReservation, ReservationAllocation, ReservationEvent
+from audit.models import ReservationAuditEntry
 
 
 _REPORT_MAX_BYTES = 4 * 1024 * 1024
@@ -602,7 +604,10 @@ class OperatorBrowserTests(LiveServerTestCase):
                                        "procurement.edit_purchase_order", "procurement.confirm_purchase_order",
                                        "procurement.receive_purchase_order", "inventory.view_stocklot",
                                        "inventory.view_stocklocation", "inventory.manage_stock_locations",
-                                       "inventory.manage_stock_lots", "inventory.allocate_stock_lots")
+                                       "inventory.manage_stock_lots", "inventory.allocate_stock_lots",
+                                       "inventory.read_availability", "inventory.view_stockreservation",
+                                       "inventory.reserve_stock", "inventory.release_reservation",
+                                       "inventory.consume_reservation", "inventory.set_location_eligibility")
                     if scenario == "catalog-readonly":
                         permissions = ("catalog.view_product", "catalog.view_variant", "catalog.view_category")
                     for permission in permissions:
@@ -770,8 +775,8 @@ class OperatorBrowserTests(LiveServerTestCase):
         self.assertEqual(Variant.objects.count(), fixture_count + 22)
         self.assertEqual(CatalogAuditEntry.objects.count(), 16)
         self.assertEqual(StockPosition.objects.count(), 12)
-        self.assertEqual(StockMovement.objects.count(), 18)
-        self.assertEqual(InventoryMovementAuditEntry.objects.count(), 18)
+        self.assertEqual(StockMovement.objects.count(), 20)
+        self.assertEqual(InventoryMovementAuditEntry.objects.count(), 20)
         for variant in legacy_variants:
             audit = CatalogAuditEntry.objects.get(variant_id=variant.pk)
             owner = variant.sku.removeprefix("FICTIONAL-")
@@ -897,16 +902,29 @@ class OperatorBrowserTests(LiveServerTestCase):
             for line in order.lines.all():
                 position = StockPosition.objects.get(variant_id=line.variant_id)
                 movements = list(StockMovement.objects.filter(position=position).order_by("sequence"))
-                self.assertEqual((position.on_hand, position.version), (line.quantity, 2))
-                self.assertEqual(len(movements), 2)
-                self.assertTrue(all(movement.kind == "RECEIPT" and
+                consumed = line.variant_sku.endswith("-A")
+                self.assertEqual((position.on_hand, position.version), (line.quantity - (1 if consumed else 0), 3 if consumed else 2))
+                self.assertEqual(len(movements), 3 if consumed else 2)
+                self.assertTrue(all(
                                     InventoryMovementAuditEntry.objects.filter(movement_id=movement.pk, actor_id=actor).count() == 1
                                     for movement in movements))
                 self.assertEqual(set(ReceiptLine.objects.filter(order_line=line).values_list("stock_movement_id", flat=True)),
-                                 {movement.pk for movement in movements})
+                                 {movement.pk for movement in movements if movement.kind == "RECEIPT"})
                 allocations = ReceiptAllocation.objects.filter(receipt_line__order_line=line)
                 if line.variant_sku.endswith("-A"):
-                    self.assertEqual((allocations.count(), StockLotBalance.objects.get(lot__variant_id=line.variant_id).quantity), (2, 5))
+                    self.assertEqual((allocations.count(), StockLotBalance.objects.get(lot__variant_id=line.variant_id).quantity), (2, 4))
                 else:
                     self.assertFalse(allocations.exists())
         print("PROCUREMENT_BROWSER_PERSISTENCE_PASS: 2 orders, 4 receipts, 8 receipt lines and stock movements; Procurement and Inventory Audit reconciled", flush=True)
+        self.assertEqual(StockReservation.objects.count(), 6)
+        self.assertEqual(ReservationAllocation.objects.count(), 6)
+        self.assertEqual(ReservationEvent.objects.count(), ReservationAuditEntry.objects.count())
+        for project in ("desktop", "mobile"):
+            actor = str(accounts[f"fictional-{project}-procurement-journey"])
+            rows = StockReservation.objects.filter(actor_id=actor)
+            self.assertCountEqual(rows.values_list("state",flat=True), ["RELEASED","CONSUMED","ACTIVE"])
+            consumed = rows.get(state="CONSUMED").allocations.get()
+            self.assertEqual(StockMovement.objects.get(pk=consumed.stock_movement_id).kind,"CONSUMPTION")
+        for event in ReservationEvent.objects.all():
+            self.assertTrue(ReservationAuditEntry.objects.filter(event_id=event.pk, actor_id=event.actor_id, action=event.action).exists())
+        print("RESERVATION_BROWSER_PERSISTENCE_PASS: 6 reservations; 2 releases, 2 consumptions and 2 uncertain results; 2 physical exits/Audit; no duplicate writes",flush=True)

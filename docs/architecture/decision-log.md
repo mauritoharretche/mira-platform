@@ -18,6 +18,7 @@
 | [ADR-024](adr/ADR-024-operator-variant-pricing.md) | Operator variant pricing | Accepted | 2026-11-17 |
 | [ADR-025](adr/ADR-025-operator-variant-measurements.md) | Operator variant measurement declarations | Accepted | 2026-11-18 |
 | [ADR-026](adr/ADR-026-procurement-purchasing-and-receipts.md) | Procurement purchasing and goods receipts | Accepted | 2026-11-22 |
-| [ADR-027](adr/ADR-027-inventory-lots-locations-fefo.md) | Physical lot attribution and FEFO | Proposed | 2026-11-24 |
+| [ADR-027](adr/ADR-027-inventory-lots-locations-fefo.md) | Physical lot attribution and FEFO | Accepted | 2026-11-24 |
+| [ADR-028](adr/ADR-028-commercial-inventory-reservations.md) | Commercial inventory and transactional reservations | Proposed | 2026-11-24 |
 
 See `adr/ADR-TEMPLATE.md` for the required format.

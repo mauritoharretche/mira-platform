@@ -1,6 +1,6 @@
 # ADR-027: Physical lot attribution and FEFO in the pilot operation
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-24
 - Human owner: Mauro Harretche
 - Technical owner: MIRA engineering

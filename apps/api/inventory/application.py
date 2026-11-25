@@ -15,6 +15,7 @@ from .contracts import (
     StockMovementSnapshot, StockNotInitializedError, StockSnapshot, StockReceiptResult,
 )
 from .models import StockLotBalance, StockMovement, StockPosition
+from .locking import inventory_transaction
 
 
 def _quantity(value: int, *, positive: bool = False) -> int:
@@ -54,6 +55,7 @@ def _append(*, actor, position, before, delta, kind, reason):
     audit_application.record_inventory_movement(
         actor=actor,
         action=(InventoryMovementAuditAction.STOCK_RECEIVED if kind is StockMovementKind.RECEIPT
+                else InventoryMovementAuditAction.STOCK_CONSUMED if kind is StockMovementKind.CONSUMPTION
                 else InventoryMovementAuditAction.STOCK_ADJUSTED),
         variant_id=position.variant_id, position_id=position.pk, movement_id=movement.pk,
         sequence=movement.sequence, unit=movement.unit,
@@ -62,6 +64,7 @@ def _append(*, actor, position, before, delta, kind, reason):
     return movement
 
 
+@inventory_transaction
 def receive_stock(
     *, principal: object, variant_id: UUID, unit: InventoryUnit,
     quantity: int, expected_version: int | None,
@@ -76,6 +79,7 @@ def receive_stock(
                           quantity=quantity, expected_version=expected_version).stock
 
 
+@inventory_transaction
 def receive_stock_for_purchase(
     *, principal: object, variant_id: UUID, unit: InventoryUnit,
     quantity: int, expected_version: int | None,
@@ -122,6 +126,7 @@ def _receive_stock(*, principal, variant_id, unit, quantity, expected_version) -
     return StockReceiptResult(stock=_snapshot(position), movement_id=movement.pk)
 
 
+@inventory_transaction
 def adjust_stock(
     *, principal: object, variant_id: UUID, new_on_hand: int,
     reason: str, expected_version: int,

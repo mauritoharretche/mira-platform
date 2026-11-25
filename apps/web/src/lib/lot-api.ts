@@ -1,6 +1,6 @@
 import { post, request, validPositiveInteger } from "./operations-api";
 
-export type Location = { id: string; code: string; name: string; active: boolean };
+export type Location = { id: string; code: string; name: string; active: boolean; commercial_eligible: boolean; version: string };
 export type Lot = { id: string; code: string; expires_on: string | null; status: "ACTIVE" | "BLOCKED" | "QUARANTINE";
   expired: boolean; version: string; quantity: string; locations: { id: string; code: string; quantity: string }[] };
 export type LotState = { on_hand: string; unallocated: string; lots: Lot[]; fefo: string[]; truncated: boolean };
