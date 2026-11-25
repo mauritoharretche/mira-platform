@@ -61,12 +61,13 @@ _BROWSER_CASES = {
     }),
     "procurement.spec.ts": frozenset({"procurement-journey"}),
     "measured.spec.ts": frozenset({"measured-journey"}),
+    "pos.spec.ts": frozenset({"pos-journey", "pos-lost"}),
 }
 _FAILED_RESULT_STATES = frozenset({"failed", "timedOut", "interrupted"})
 _TEST_OUTCOMES = frozenset({"expected", "unexpected", "flaky", "skipped"})
 _GLOBAL_LOGIN_LIMIT = 30
 _GLOBAL_LOGIN_WINDOW = timedelta(seconds=60)
-_LOGIN_RESERVATIONS_PER_PROJECT = 20
+_LOGIN_RESERVATIONS_PER_PROJECT = 22
 
 
 def _login_capacity(window, now):
@@ -581,7 +582,7 @@ class OperatorBrowserTests(LiveServerTestCase):
         from django.contrib.auth.models import Permission
         for project in ("desktop", "mobile"):
             for scenario in ("journey", "csrf", "denied", "revoked", "duplicate", "lost-creation", "lost-receipt", "expired",
-                             "catalog-journey", "catalog-readonly", "catalog-revoked", "catalog-stale", "catalog-lost-category", "catalog-lost-change", "catalog-variants", "catalog-variants-lost", "catalog-price", "catalog-price-lost", "procurement-journey", "measured-journey"):
+                             "catalog-journey", "catalog-readonly", "catalog-revoked", "catalog-stale", "catalog-lost-category", "catalog-lost-change", "catalog-variants", "catalog-variants-lost", "catalog-price", "catalog-price-lost", "procurement-journey", "measured-journey", "pos-journey", "pos-lost"):
                 username = f"fictional-{project}-{scenario}"
                 user = get_user_model()(username=username)
                 validate_password(password, user=user)
@@ -599,7 +600,7 @@ class OperatorBrowserTests(LiveServerTestCase):
                                        "catalog.view_variant_price_history")
                     if scenario == "catalog-price":
                         permissions = (*permissions, "catalog.set_variant_measurement_spec", "catalog.view_variantmeasurementspec")
-                    if scenario in ("procurement-journey", "measured-journey"):
+                    if scenario in ("procurement-journey", "measured-journey", "pos-journey", "pos-lost"):
                         permissions = (*permissions, "procurement.view_supplier", "procurement.manage_supplier",
                                        "procurement.view_purchaseorder", "procurement.create_purchase_order",
                                        "procurement.edit_purchase_order", "procurement.confirm_purchase_order",
@@ -615,6 +616,9 @@ class OperatorBrowserTests(LiveServerTestCase):
                                        "inventory.record_physical_count", "inventory.review_physical_count", "inventory.complete_physical_count", "inventory.write_off_stock")
                     if scenario == "catalog-readonly":
                         permissions = ("catalog.view_product", "catalog.view_variant", "catalog.view_category")
+                    if scenario in ("pos-journey", "pos-lost"):
+                        permissions = ("pos.discover_products", "pos.quote_sale", "pos.confirm_sale")
+                        if scenario == "pos-journey": permissions = (*permissions,"pos.read_sale","pos.list_sales")
                     for permission in permissions:
                         app, code = permission.split(".")
                         user.user_permissions.add(Permission.objects.get(content_type__app_label=app, codename=code))
@@ -654,6 +658,13 @@ class OperatorBrowserTests(LiveServerTestCase):
             measured_variants.append(Variant.objects.create(product=product,label="Fictional measured pack",sku=f"MEASURED-FIXTURE-{project}"))
         fixture_count = Product.objects.count()
         self.assertEqual(fixture_count, 122)
+        from pos.tests.fixtures import prepare_catalog_stock
+        pos_variants = []
+        for project in ("desktop", "mobile"):
+            _, _, _, prepared = prepare_catalog_stock(prefix=f"POS-{project}")
+            pos_variants.extend(prepared)
+        fixture_count = Product.objects.count()
+        self.assertEqual(fixture_count, 126)
         # No PostgreSQL/Django secret is passed to Next or Playwright.
         env = {key: os.environ[key] for key in ("PATH", "HOME", "TMPDIR", "PLAYWRIGHT_BROWSERS_PATH") if key in os.environ}
         env.update(MIRA_API_BASE_URL=self.live_server_url.replace("localhost", "127.0.0.1"), NEXT_TELEMETRY_DISABLED="1",
@@ -785,14 +796,14 @@ class OperatorBrowserTests(LiveServerTestCase):
         self.assertEqual(Product.objects.count(), fixture_count + 12)
         self.assertEqual(Variant.objects.count(), fixture_count + 22)
         self.assertEqual(CatalogAuditEntry.objects.count(), 16)
-        self.assertEqual(StockPosition.objects.count(), 14)
-        self.assertEqual(StockMovement.objects.count(), 30)
-        self.assertEqual(InventoryMovementAuditEntry.objects.count(), 30)
+        self.assertEqual(StockPosition.objects.count(), 18)
+        self.assertEqual(StockMovement.objects.count(), 40)
+        self.assertEqual(InventoryMovementAuditEntry.objects.count(), 40)
         for variant in legacy_variants:
             audit = CatalogAuditEntry.objects.get(variant_id=variant.pk)
             owner = variant.sku.removeprefix("FICTIONAL-")
             self.assertEqual(audit.actor_id, str(accounts["fictional-" + owner]))
-        for position in StockPosition.objects.exclude(variant_id__in=[variant.pk for variant in procurement_variants + measured_variants]):
+        for position in StockPosition.objects.exclude(variant_id__in=[variant.pk for variant in procurement_variants + measured_variants + pos_variants]):
             movements = list(StockMovement.objects.filter(position=position).order_by("sequence"))
             audits = [InventoryMovementAuditEntry.objects.get(movement_id=item.pk) for item in movements]
             actor = CatalogAuditEntry.objects.get(variant_id=position.variant_id).actor_id if CatalogAuditEntry.objects.filter(variant_id=position.variant_id).exists() else None
@@ -808,7 +819,7 @@ class OperatorBrowserTests(LiveServerTestCase):
                 self.assertEqual((audit.actor_id, audit.sequence, audit.quantity_after), (actor, movement.sequence, movement.quantity_after))
         print("BROWSER_PERSISTENCE_PASS: 10 creations, 8 positions, 10 movements/audits; confirmed adjustments and lost responses reconciled", flush=True)
 
-        self.assertEqual(Category.objects.count(), 8)
+        self.assertEqual(Category.objects.count(), 10)
         self.assertEqual(CatalogChangeAuditEntry.objects.count(), 22)
         for project in ("desktop", "mobile"):
             actor = str(accounts[f"fictional-{project}-catalog-journey"])
@@ -862,8 +873,8 @@ class OperatorBrowserTests(LiveServerTestCase):
                 self.assertFalse(VariantMeasurementSpec.objects.filter(variant_id=variant.pk).exists())
         print("VARIANT_BROWSER_PERSISTENCE_PASS: 4 additions/audits; only explicit receipts, no price or measurement", flush=True)
 
-        self.assertEqual(VariantPriceRevision.objects.count(), 8)
-        self.assertEqual(CatalogPriceAuditEntry.objects.count(), 8)
+        self.assertEqual(VariantPriceRevision.objects.count(), 12)
+        self.assertEqual(CatalogPriceAuditEntry.objects.count(), 12)
         for project in ("desktop", "mobile"):
             for scenario, amounts in (("catalog-price", ["12.30", "14.50"]), ("catalog-price-lost", ["19.90"])):
                 product = fixture_products[project, scenario]
@@ -878,8 +889,8 @@ class OperatorBrowserTests(LiveServerTestCase):
                 self.assertEqual([item.sequence for item in revisions], list(range(1, len(revisions) + 1)))
         print("PRICE_BROWSER_PERSISTENCE_PASS: 6 revisions/audits; no-op, conflict and lost response did not duplicate writes", flush=True)
         from catalog.models import VariantMeasurementSpec
-        self.assertEqual(VariantMeasurementSpec.objects.count(), 2)
-        self.assertEqual(CatalogMeasurementAuditEntry.objects.count(), 4)
+        self.assertEqual(VariantMeasurementSpec.objects.count(), 6)
+        self.assertEqual(CatalogMeasurementAuditEntry.objects.count(), 8)
         for project in ("desktop", "mobile"):
             product = fixture_products[project, "catalog-price"]
             variant = product.variants.get(sku=f"CATALOG-FIXTURE-{project}-catalog-price")
@@ -896,7 +907,7 @@ class OperatorBrowserTests(LiveServerTestCase):
 
         self.assertEqual((Supplier.objects.count(), PurchaseOrder.objects.count(), GoodsReceipt.objects.count()), (4, 4, 8))
         self.assertEqual((ReceiptLine.objects.count(), ProcurementEvent.objects.count(), ProcurementAuditEntry.objects.count()), (12, 20, 20))
-        self.assertEqual((StockLocation.objects.count(), StockLot.objects.count(), ReceiptAllocation.objects.count()), (4, 4, 8))
+        self.assertEqual((StockLocation.objects.count(), StockLot.objects.count(), ReceiptAllocation.objects.count()), (6, 8, 8))
         self.assertEqual(StockLotEvent.objects.count(), InventoryLotAuditEntry.objects.count())
         for project in ("desktop", "mobile"):
             actor = str(accounts[f"fictional-{project}-procurement-journey"])
@@ -927,8 +938,8 @@ class OperatorBrowserTests(LiveServerTestCase):
                 else:
                     self.assertFalse(allocations.exists())
         print("PROCUREMENT_BROWSER_PERSISTENCE_PASS: 2 orders, 4 receipts, 8 receipt lines and stock movements; Procurement and Inventory Audit reconciled", flush=True)
-        self.assertEqual(StockReservation.objects.count(), 8)
-        self.assertEqual(ReservationAllocation.objects.count(), 8)
+        self.assertEqual(StockReservation.objects.count(), 12)
+        self.assertEqual(ReservationAllocation.objects.count(), 14)
         self.assertEqual(ReservationEvent.objects.count(), ReservationAuditEntry.objects.count())
         for project in ("desktop", "mobile"):
             actor = str(accounts[f"fictional-{project}-procurement-journey"])
@@ -972,3 +983,29 @@ class OperatorBrowserTests(LiveServerTestCase):
         for event in PhysicalInventoryEvent.objects.all():
             self.assertTrue(PhysicalInventoryAuditEntry.objects.filter(event_id=event.pk,actor_id=event.actor_id,action=event.action).exists())
         print("MEASURED_BROWSER_PERSISTENCE_PASS: 2 mass orders, 4 partial receipts, 2 consumptions, 2 counts and 2 losses; 10 G movements/Audit reconciled exactly",flush=True)
+
+        from pos.models import Sale, SaleLine
+        from audit.models import PosAuditEntry
+        self.assertEqual(Sale.objects.count(),4)
+        self.assertEqual(SaleLine.objects.count(),6)
+        self.assertEqual(PosAuditEntry.objects.filter(action="pos.committed").count(),4)
+        self.assertEqual(PosAuditEntry.objects.filter(action="pos.quoted").count(),6)
+        self.assertEqual(PosAuditEntry.objects.count(),10)
+        for project in ("desktop","mobile"):
+            for scenario,total,count in (("pos-journey","224.50",2),("pos-lost","100.00",1)):
+                actor=str(accounts[f"fictional-{project}-{scenario}"])
+                sale=Sale.objects.get(actor_id=actor)
+                self.assertEqual((str(sale.total_ars),sale.state,sale.settlement,sale.lines.count()),(total,"COMMITTED_UNSETTLED","UNSETTLED",count))
+                self.assertEqual(PosAuditEntry.objects.get(sale_id=sale.pk).actor_id,actor)
+                reservation=StockReservation.objects.get(pk=sale.reservation_id)
+                self.assertEqual(reservation.state,"CONSUMED")
+                for allocation in reservation.allocations.all():
+                    movement=StockMovement.objects.get(pk=allocation.stock_movement_id)
+                    self.assertEqual(movement.kind,"CONSUMPTION")
+                    self.assertEqual(InventoryMovementAuditEntry.objects.get(movement_id=movement.pk).actor_id,actor)
+            for suffix,on_hand in (("EACH",7),("MASS",754999)):
+                position=StockPosition.objects.get(variant__sku=f"POS-{project}-{suffix}")
+                self.assertEqual(position.on_hand,on_hand)
+                self.assertEqual(position.on_hand,sum(position.movements.values_list("delta",flat=True)))
+                self.assertEqual(position.on_hand,sum(StockLotBalance.objects.filter(lot__variant_id=position.variant_id).values_list("quantity",flat=True)))
+        print("POS_BROWSER_PERSISTENCE_PASS: 4 unsettled sales, 6 immutable lines, 4 consumed reservations, 6 consumption movements and matching POS/Inventory Audit; uncertain writes reconciled without duplicate consumption",flush=True)

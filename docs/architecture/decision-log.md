@@ -19,7 +19,10 @@
 | [ADR-025](adr/ADR-025-operator-variant-measurements.md) | Operator variant measurement declarations | Accepted | 2026-11-18 |
 | [ADR-026](adr/ADR-026-procurement-purchasing-and-receipts.md) | Procurement purchasing and goods receipts | Accepted | 2026-11-22 |
 | [ADR-027](adr/ADR-027-inventory-lots-locations-fefo.md) | Physical lot attribution and FEFO | Accepted | 2026-11-24 |
-| [ADR-029](adr/ADR-029-measured-inventory-and-counts.md) | Exact measured inventory, physical counts and losses | Proposed | 2026-11-24 |
+| [ADR-029](adr/ADR-029-measured-inventory-and-counts.md) | Exact measured inventory, physical counts and losses | Accepted | 2026-11-24 |
 | [ADR-028](adr/ADR-028-commercial-inventory-reservations.md) | Commercial inventory and transactional reservations | Accepted | 2026-11-24 |
+| [ADR-030](adr/ADR-030-isolated-retail-sales-engine.md) | Isolated retail sales engine | Proposed | 2026-11-25 |
 
 See `adr/ADR-TEMPLATE.md` for the required format.
+
+ADR-029 acceptance was authorized by the maintainer on 2026-11-25 after reviewing the integrated implementation. ADR-030 local architecture and implementation are approved; formal ADR acceptance and publication remain separate.

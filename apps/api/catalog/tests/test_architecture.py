@@ -43,6 +43,7 @@ class CatalogModuleBoundaryTests(SimpleTestCase):
             if function.__module__ == audit_application.__name__ and not name.startswith("_")
         }
         self.assertEqual(public_functions, {
+            "record_pos_event", "record_variant_active_changed",
             "record_catalog_success", "record_category_created",
             "record_product_category_changed", "record_product_active_changed",
             "record_variant_price_set",
@@ -59,6 +60,7 @@ class CatalogModuleBoundaryTests(SimpleTestCase):
             "inventory": {"catalog", "identity", "audit", "system"},
             "procurement": {"catalog", "inventory", "identity", "audit", "system"},
             "system": set(),
+            "pos": {"identity", "catalog", "inventory", "audit", "system"},
         }
         violations = []
         for package in api_root.iterdir():
@@ -93,7 +95,7 @@ class CatalogModuleBoundaryTests(SimpleTestCase):
                             and dependency not in allowed_dependencies[owner]
                         )
                         transport_adapter = source.name == "http.py" or owner == "inventory" and source.name in {"lot_http.py", "reservation_http.py", "count_http.py"}
-                        if dependency == "system" and owner in {"identity", "catalog", "inventory", "procurement"} and not transport_adapter:
+                        if dependency == "system" and owner in {"identity", "catalog", "inventory", "procurement", "pos"} and not transport_adapter:
                             violations.append(f"{relative}:{node.lineno}: transport import outside adapter")
                         if imports_model or wrong_direction:
                             violations.append(f"{relative}:{node.lineno}: {imported}")

@@ -21,7 +21,11 @@ class IdentitySurfaceTests(SimpleTestCase):
 
         self.assertCountEqual(
             leaf_routes(get_resolver()),
-            ["api/v1/health/live/", "api/v1/health/ready/",
+            ["api/v1/operator/pos/products", "api/v1/operator/pos/quotes",
+             "api/v1/operator/pos/quotes/<str:quote_id>", "api/v1/operator/pos/sales",
+             "api/v1/operator/pos/sales/<str:sale_id>", "api/v1/operator/pos/operations/<str:operation_id>",
+             "api/v1/operator/catalog/variants/<str:variant_id>/active",
+             "api/v1/health/live/", "api/v1/health/ready/",
              "api/v1/operator/auth/csrf", "api/v1/operator/auth/login",
              "api/v1/operator/auth/session", "api/v1/operator/auth/logout",
              "api/v1/operator/catalog/products", "api/v1/operator/catalog/products/<str:product_id>",

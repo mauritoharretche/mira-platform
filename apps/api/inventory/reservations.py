@@ -178,6 +178,10 @@ def query_availability(*, principal: object, variant_id: UUID) -> AvailabilitySn
 def create_reservation(*, principal: object, operation_id: UUID, source: str, reference: str,
                        expires_at: datetime, lines: tuple[ReservationLine, ...]) -> dict:
     actor = _actor(principal, Capability.RESERVE_STOCK)
+    return _create_reservation(actor=actor, operation_id=operation_id, source=source, reference=reference, expires_at=expires_at, lines=lines)
+
+
+def _create_reservation(*, actor, operation_id, source, reference, expires_at, lines):
     source, reference = _text(source, 40), _text(reference, 120)
     if not isinstance(expires_at, datetime) or not timezone.is_aware(expires_at):
         raise InventoryValidationError("Explicit timezone-aware expiry required")
@@ -262,6 +266,10 @@ def transition_reservation(*, principal: object, operation_id: UUID, reservation
     if action not in capabilities:
         raise InventoryValidationError("Unknown transition")
     actor = _actor(principal, capabilities[action])
+    return _transition_reservation(actor=actor, operation_id=operation_id, reservation_id=reservation_id, action=action)
+
+
+def _transition_reservation(*, actor, operation_id, reservation_id, action):
     _uuid(reservation_id)
     digest, prior = _operation(actor, operation_id, action, {"reservation_id": str(reservation_id)})
     if prior:

@@ -3,6 +3,12 @@ from django.contrib.auth import get_user_model
 from .contracts import AccessDenied, ActorContext, AuthenticationRequired, Capability
 
 _REQUIRED_PERMISSIONS = {
+    Capability.SET_VARIANT_ACTIVE: ("catalog.set_variant_active",),
+    Capability.POS_DISCOVER: ("pos.discover_products",),
+    Capability.POS_QUOTE: ("pos.quote_sale",),
+    Capability.POS_CONFIRM: ("pos.confirm_sale",),
+    Capability.POS_READ: ("pos.read_sale",),
+    Capability.POS_HISTORY: ("pos.list_sales",),
     Capability.READ_PRODUCT: ("catalog.view_product", "catalog.view_variant"),
     Capability.CREATE_PRODUCT_WITH_INITIAL_VARIANT: (
         "catalog.add_product",

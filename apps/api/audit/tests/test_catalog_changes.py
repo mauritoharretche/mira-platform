@@ -135,8 +135,9 @@ class CatalogChangeAuditDatabaseTests(TransactionTestCase):
                     else:
                         self.assert_shape_rejected(values)
 
-        self.assertEqual(valid_count, 9)
-        self.assertEqual(CatalogChangeAuditEntry.objects.count(), 9)
+        self.assertEqual(valid_count, 11)  # Nine historical shapes plus two explicit Variant transitions.
+        self.assertEqual(CatalogChangeAuditEntry.objects.count(), 11)
+        self.assertEqual(CatalogChangeAuditEntry.objects.filter(action="catalog.variant_active_changed").count(), 2)
 
     def test_parameterized_sql_cannot_bypass_null_or_action_field_guards(self):
         category_id = uuid4()
@@ -207,4 +208,7 @@ class CatalogChangeAuditDatabaseTests(TransactionTestCase):
             self.assertIn("IS NULL", sql)
             self.assertIn("IS NOT NULL", sql)
             for action in CatalogChangeAuditAction:
-                self.assertIn(action.value, sql)
+                if sql == generated and action is CatalogChangeAuditAction.VARIANT_ACTIVE_CHANGED:
+                    self.assertNotIn(action.value, sql)  # Historical migration is deliberately unchanged.
+                else:
+                    self.assertIn(action.value, sql)

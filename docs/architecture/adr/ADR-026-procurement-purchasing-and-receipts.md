@@ -28,3 +28,7 @@ Direct Procurement writes to Inventory tables would reduce calls but violate ADR
 The first release has one operation, one accounting location, EACH quantities and ARS costs. It does not implement lots, expiry, FEFO, multiple locations, advanced valuation, sellable availability, payments or tax. Those remain future work. Historical Variant labels and SKUs are snapshots for display, not a substitute for Catalog identity. Cross-table reconciliation is enforced by application tests rather than a cross-module foreign key.
 
 The new migrations are additive. Only the native isolated Django test runner may apply them to `test_mira` during local verification. This ADR records the maintainer's explicit grouped architecture approval for the Procurement MVP on 2026-11-22. Publication, merge, deployment and any non-test migration remain separate decisions under ADR-018.
+
+## Subsequent compatibility clarification — 2026-11-25
+
+The EACH-only wording above records this ADR’s original increment. ADR-029 subsequently extends the same ledger and typed contracts to explicit G accounting in integer milligrams, measured reservations/receipts and PER_KG commercial calculation. Existing EACH records and meanings remain unchanged; no historical quantities or provenance are inferred or converted. ADR-030 describes the separately authorized test-only POS consumer. This clarification does not authorize non-test migrations, payment, settlement or real trade.

@@ -19,6 +19,8 @@ from .contracts import AccessDenied, AuthenticationRequired, Capability
 from .login_throttle import LoginThrottled, reserve_login_attempt
 
 _SURFACE_CAPABILITIES = (
+    Capability.SET_VARIANT_ACTIVE,
+    Capability.POS_DISCOVER, Capability.POS_QUOTE, Capability.POS_CONFIRM, Capability.POS_READ, Capability.POS_HISTORY,
     Capability.CREATE_PRODUCT_WITH_INITIAL_VARIANT, Capability.READ_PRODUCT, Capability.ADD_VARIANT_TO_PRODUCT,
     Capability.RECEIVE_STOCK, Capability.ADJUST_STOCK, Capability.READ_STOCK, Capability.READ_STOCK_MOVEMENTS,
     Capability.READ_STOCK_LOTS, Capability.MANAGE_STOCK_LOCATIONS, Capability.MANAGE_STOCK_LOTS,

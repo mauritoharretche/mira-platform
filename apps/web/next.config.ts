@@ -2,6 +2,8 @@ import type { NextConfig } from "next";
 
 // These are the complete operator proxy surface, never an arbitrary URL proxy.
 const endpoints = [
+  "pos/products", "pos/quotes", "pos/quotes/:quoteId", "pos/sales", "pos/sales/:saleId", "pos/operations/:operationId",
+  "catalog/variants/:variantId/active",
   "auth/csrf", "auth/login", "auth/session", "auth/logout",
   "catalog/products", "catalog/products/:productId", "catalog/products/:productId/variants",
   "catalog/variants/:variantId/price", "catalog/variants/:variantId/price/revisions",

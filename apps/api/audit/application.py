@@ -330,3 +330,23 @@ def record_variant_price_set(
         new_amount=normalized_new, currency=currency, price_basis=price_basis, previous_price_basis=previous_price_basis, result="success",
     )
     return entry.id
+
+
+def record_variant_active_changed(*, actor: ActorContext, variant_id: UUID, previous_is_active: bool, new_is_active: bool) -> UUID:
+    if type(previous_is_active) is not bool or type(new_is_active) is not bool or previous_is_active == new_is_active:
+        raise ValueError("Effective boolean activation change required")
+    return _record_change(actor=actor, action=CatalogChangeAuditAction.VARIANT_ACTIVE_CHANGED,
+                         target_id=variant_id, previous_is_active=previous_is_active, new_is_active=new_is_active)
+
+
+def record_pos_event(*, actor: ActorContext, event_id: UUID, quote_id: UUID, sale_id: UUID | None, action: str) -> UUID:
+    from .models import PosAuditEntry
+    if not transaction.get_connection("default").in_atomic_block:
+        raise TransactionManagementError("Audit requires caller transaction")
+    if not isinstance(actor, ActorContext) or not isinstance(actor.actor_id, str) or not actor.actor_id.strip() or len(actor.actor_id) > 128:
+        raise ValueError("Trusted actor required")
+    if not isinstance(event_id, UUID) or not isinstance(quote_id, UUID) or (sale_id is not None and not isinstance(sale_id, UUID)):
+        raise ValueError("Typed references required")
+    if action not in {"pos.quoted", "pos.cancelled", "pos.committed"} or (sale_id is not None) != (action == "pos.committed"):
+        raise ValueError("Invalid POS event")
+    return PosAuditEntry.objects.create(actor_id=actor.actor_id,event_id=event_id,quote_id=quote_id,sale_id=sale_id,action=action).pk

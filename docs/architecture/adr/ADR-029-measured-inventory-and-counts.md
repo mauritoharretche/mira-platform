@@ -1,6 +1,6 @@
 # ADR-029: Measured inventory, physical counts and losses
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-24
 - Human owner: Mauro Harretche
 - Technical owner: MIRA engineering
@@ -30,3 +30,7 @@ Losses use persistent operation identities and explicit EXPIRATION, DAMAGE, QUAL
 A typed measurement carries net mass, optional gross/tare, source, aware timestamp, unit and explicit resolution. Gross minus tare must equal net exactly when both are supplied; every amount must respect the declared resolution and milligram floor. This is a software contract, not scale protocol or regulatory approval. Hardware, PLU and metrology validation remain future POS work.
 
 Migrations add structures/columns and broaden existing constraints for G and new movement/price bases without editing earlier migrations or rewriting history. Only the native test_mira runner may apply them locally. A non-test rollout requires a separate preservation, backup and compatibility gate. Recovery uses explicit forward corrections and event history, never destructive stock replacement.
+
+## Maintainer acceptance — 2026-11-25
+
+The POS-01 mandate expressly authorizes acceptance after review of the integrated INV-04 implementation. Its exact quantity, HALF_EVEN arithmetic, immutable ledger, count/loss and rollback contracts have been reviewed against this decision. Acceptance does not authorize real trade, non-test migrations, deployment or payment/scale integration. POS-01 is a separately scoped consumer described in ADR-030.
