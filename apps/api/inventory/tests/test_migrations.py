@@ -28,9 +28,11 @@ class InventoryMigrationTests(TestCase):
                       CatalogAuditEntry, CatalogChangeAuditEntry, CatalogPriceAuditEntry, CatalogMeasurementAuditEntry):
             historic = state.apps.get_model(model._meta.app_label, model.__name__)
             added = {"previous_price_basis"} if model is CatalogPriceAuditEntry else set()
+            if model is Variant: added |= {"is_active"}
             self.assertEqual({f.name for f in historic._meta.fields} | added, {f.name for f in model._meta.fields})
         variant = Variant.objects.get(pk=old_variant.pk)
         self.assertEqual((variant.sku, variant.barcode), ("LEGACY-INVENTORY-001", "000123"))
+        self.assertTrue(variant.is_active)
         self.assertFalse(StockPosition.objects.exists())
         self.assertFalse(StockMovement.objects.exists())
         self.assertFalse(InventoryMovementAuditEntry.objects.exists())

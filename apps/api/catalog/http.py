@@ -430,3 +430,25 @@ class VariantMeasurementSpecView(OperatorAPIView):
         except application.CatalogValidationError:
             return error_response("validation_error", 400)
         return Response({"spec": _measurement_payload(spec)})
+
+
+class VariantActiveView(OperatorAPIView):
+    def post(self, request, variant_id):
+        from .sales import set_variant_active
+        require_capability(principal=request.user, capability=Capability.SET_VARIANT_ACTIVE)
+        from rest_framework import serializers
+        data = request.data
+        if not isinstance(data, dict) or set(data) != {"is_active", "expected_active"} or any(type(data[k]) is not bool for k in data):
+            raise serializers.ValidationError("Explicit boolean activation and expectation required")
+        try:
+            identifier = UUID(variant_id)
+            if str(identifier) != variant_id.lower(): raise ValueError
+        except (ValueError, TypeError):
+            raise serializers.ValidationError("UUID required") from None
+        try:
+            active = set_variant_active(principal=request.user, variant_id=identifier, **data)
+        except application.VariantNotFoundError:
+            return error_response("not_found", 404)
+        except application.PriceConflictError:
+            return error_response("variant_conflict", 409)
+        return Response({"variant_id": str(identifier), "is_active": active})

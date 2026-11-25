@@ -3,6 +3,12 @@ from enum import Enum
 
 
 class Capability(Enum):
+    SET_VARIANT_ACTIVE = "catalog.set_variant_active"
+    POS_DISCOVER = "pos.discover_products"
+    POS_QUOTE = "pos.quote_sale"
+    POS_CONFIRM = "pos.confirm_sale"
+    POS_READ = "pos.read_sale"
+    POS_HISTORY = "pos.list_sales"
     READ_PRODUCT = "catalog.read_product"
     CREATE_PRODUCT_WITH_INITIAL_VARIANT = "catalog.create_product_with_initial_variant"
     ADD_VARIANT_TO_PRODUCT = "catalog.add_variant_to_product"

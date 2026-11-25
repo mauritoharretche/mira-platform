@@ -1,3 +1,5 @@
+from pos.http import DiscoveryView, QuotesView, QuoteView, SalesView, SaleView, OperationView
+from catalog.http import VariantActiveView
 from django.urls import include, path
 
 from catalog.http import ProductVariantsView, CategoriesView, ProductActiveView, ProductCategoryView, ProductCreateView, ProductDetailView, VariantPriceView, VariantPriceHistoryView, VariantMeasurementSpecView, VariantReferenceSearchView
@@ -13,6 +15,13 @@ from procurement.http import (ConfirmOrderView, OrderView, OrdersView, ReceiptOp
 from inventory.count_http import CountsView, CountView, ObservationView, ReviewCountView, CompleteCountView, LossView, PhysicalOperationView
 
 urlpatterns = [
+    path("api/v1/operator/pos/products", DiscoveryView.as_view(), name="pos-discovery"),
+    path("api/v1/operator/pos/quotes", QuotesView.as_view(), name="pos-quotes"),
+    path("api/v1/operator/pos/quotes/<str:quote_id>", QuoteView.as_view(), name="pos-quote"),
+    path("api/v1/operator/pos/sales", SalesView.as_view(), name="pos-sales"),
+    path("api/v1/operator/pos/sales/<str:sale_id>", SaleView.as_view(), name="pos-sale"),
+    path("api/v1/operator/pos/operations/<str:operation_id>", OperationView.as_view(), name="pos-operation"),
+    path("api/v1/operator/catalog/variants/<str:variant_id>/active", VariantActiveView.as_view(), name="operator-variant-active"),
     path("api/v1/", include("system.urls")),
     path("api/v1/operator/auth/csrf", csrf_token, name="operator-csrf"),
     path("api/v1/operator/auth/login", OperatorLoginView.as_view(), name="operator-login"),

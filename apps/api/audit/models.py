@@ -81,7 +81,7 @@ class CatalogChangeAuditEntry(models.Model):
                     )
                     | (
                         models.Q(
-                            action="catalog.product_active_changed",
+                            action__in=["catalog.product_active_changed", "catalog.variant_active_changed"],
                             previous_category_id__isnull=True, new_category_id__isnull=True,
                             previous_is_active__isnull=False, new_is_active__isnull=False,
                         )
@@ -335,3 +335,16 @@ class PhysicalInventoryAuditEntry(models.Model):
     class Meta:
         constraints = [models.CheckConstraint(condition=models.Q(action__in=["count.created", "count.observed", "count.reviewed", "count.completed", "loss.recorded"]), name="audit_physical_action_valid"),
             models.CheckConstraint(condition=GreaterThan(Length(Trim("actor_id")), 0), name="audit_physical_actor_valid")]
+
+
+class PosAuditEntry(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    actor_id = models.CharField(max_length=128, db_collation="C")
+    event_id = models.UUIDField(unique=True)
+    quote_id = models.UUIDField()
+    sale_id = models.UUIDField(null=True)
+    action = models.CharField(max_length=24, db_collation="C")
+    occurred_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=models.Q(action__in=["pos.quoted", "pos.cancelled"], sale_id__isnull=True) | models.Q(action="pos.committed", sale_id__isnull=False), name="audit_pos_shape_valid")]

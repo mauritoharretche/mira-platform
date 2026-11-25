@@ -146,3 +146,7 @@ record actual results in the consolidated technical review.
 ## References
 
 - ADR-012 through ADR-018.
+
+## Subsequent compatibility clarification — 2026-11-25
+
+The EACH-only wording above records this ADR’s original increment. ADR-029 subsequently extends the same ledger and typed contracts to explicit G accounting in integer milligrams, measured reservations/receipts and PER_KG commercial calculation. Existing EACH records and meanings remain unchanged; no historical quantities or provenance are inferred or converted. ADR-030 describes the separately authorized test-only POS consumer. This clarification does not authorize non-test migrations, payment, settlement or real trade.

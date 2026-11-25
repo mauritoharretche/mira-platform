@@ -2,6 +2,7 @@ import uuid
 from decimal import Decimal
 
 from django.db import models
+from django.db.models.functions import Upper, Collate
 
 from .contracts import MeasurementUnit, PriceBasis
 
@@ -34,6 +35,7 @@ class Product(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        indexes = [models.Index(Collate(Upper("name"), "C"), name="catalog_product_name_prefix")]
         permissions = [
             ("set_product_category", "Can set product category"),
             ("set_product_active", "Can set product active state"),
@@ -47,6 +49,7 @@ class Product(models.Model):
 
 
 class Variant(models.Model):
+    is_active = models.BooleanField(default=True, db_default=True)
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="variants")
     label = models.CharField(max_length=255)
@@ -56,6 +59,8 @@ class Variant(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        indexes = [models.Index(Collate(Upper("label"), "C"), name="catalog_variant_label_prefix")]
+        permissions = [("set_variant_active", "Can set variant active state")]
         constraints = [
             models.UniqueConstraint(fields=["sku"], name="catalog_variant_sku_unique"),
             models.UniqueConstraint(fields=["barcode"], name="catalog_variant_barcode_unique"),

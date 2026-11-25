@@ -39,6 +39,9 @@ class MeasurementMigrationCompatibilityTests(TestCase):
                                 (change, CatalogChangeAuditEntry), (price, CatalogPriceAuditEntry)):
             current = model.objects.get(pk=historic.pk)
             added = {"previous_price_basis"} if current.__class__.__name__ == "CatalogPriceAuditEntry" else set()
+            if model is Variant:
+                added |= {"is_active"}
+                self.assertTrue(current.is_active)  # Explicit compatibility default; no price/stock backfill.
             self.assertEqual({f.name for f in historic._meta.fields} | added, {f.name for f in current._meta.fields})
             for field in historic._meta.fields:
                 self.assertEqual(getattr(current, field.attname), getattr(historic, field.attname))

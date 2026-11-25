@@ -91,7 +91,7 @@ assert settings.OPERATOR_HTTP_ENABLED is True
 assert connection.settings_dict["NAME"] == "mira"
 assert connection.settings_dict["TEST"]["NAME"] == "test_mira"
 assert connection.connection is None
-paths = ["auth/csrf", "auth/login", "auth/session", "auth/logout", "catalog/products", "catalog/products/invalid",
+paths = ["pos/products", "pos/quotes", "pos/quotes/invalid", "pos/sales", "pos/sales/invalid", "pos/operations/invalid", "catalog/variants/invalid/active", "auth/csrf", "auth/login", "auth/session", "auth/logout", "catalog/products", "catalog/products/invalid",
          "inventory/variants/invalid/initial-receipt", "inventory/variants/invalid/adjustments", "inventory/variants/invalid/stock", "inventory/variants/invalid/movements",
          "inventory/variants/invalid/availability", "inventory/reservations", "inventory/reservations/invalid", "inventory/reservations/invalid/release", "inventory/reservations/invalid/expire", "inventory/reservations/invalid/consume", "inventory/operations/invalid", "inventory/classifications", "inventory/locations/invalid/eligibility",
          "inventory/counts", "inventory/counts/invalid", "inventory/counts/invalid/lines/invalid", "inventory/counts/invalid/review", "inventory/counts/invalid/complete", "inventory/losses", "inventory/physical-operations/invalid",
@@ -119,7 +119,9 @@ with ExitStack() as stack:
                "inventory.lot_application.set_lot_status", "inventory.lot_application.transfer_lot",
                "inventory.lot_application.correct_lot", "inventory.lot_application.list_lots",
                "catalog.application.create_category", "catalog.application.set_product_category", "catalog.application.set_product_active",
-               "catalog.application.add_variant_to_product", "catalog.application.get_current_variant_price",
+               "pos.application.discover", "pos.application.quote_sale", "pos.application.confirm_sale",
+               "pos.application.read_sale", "pos.application.lookup_operation", "pos.application.history",
+               "catalog.sales.set_variant_active", "catalog.application.add_variant_to_product", "catalog.application.get_current_variant_price",
                "catalog.application.set_variant_price", "catalog.application.list_variant_price_history_page",
                "catalog.application.get_variant_measurement_spec", "catalog.application.set_variant_measurement_spec",
                "catalog.references.search_variant_references", "procurement.application.create_supplier",
@@ -141,7 +143,7 @@ print(json.dumps({"rejected_requests": len(paths) * 2, "connections_opened": 0, 
         process = subprocess.run([sys.executable, "-B", "-c", worker], cwd=settings.BASE_DIR, env=env,
                                  capture_output=True, text=True, timeout=20)
         self.assertEqual(process.returncode, 0, "Independent-process isolation regression failed")
-        self.assertEqual(json.loads(process.stdout), {"rejected_requests": 92, "connections_opened": 0, "session_auth_business_calls": 0})
+        self.assertEqual(json.loads(process.stdout), {"rejected_requests": 106, "connections_opened": 0, "session_auth_business_calls": 0})
 
     def test_operator_is_disabled_in_base_and_all_endpoints_fail_closed_when_disabled(self):
         fake = {"DJANGO_SECRET_KEY": "fictional-settings-check", "POSTGRES_DB": "mira", "POSTGRES_USER": "fictional", "POSTGRES_PASSWORD": "fictional-settings-check"}

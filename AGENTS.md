@@ -142,3 +142,14 @@ These are engineering guardrails, not final business rules. Domain behavior must
 ## 12. Project status
 
 The project is greenfield. No production stack, cloud provider, payment provider, tax integration or deployment target is approved until discovery is complete and the relevant ADRs are accepted.
+
+## 13. Local workspace policy
+
+- Keep the primary `mira-platform` worktree on clean, verified `main`.
+- Reuse the sibling `mira-development` worktree for ordinary implementation and testing. Keep it detached while idle; use one short-lived feature branch per milestone.
+- VS Code and Codex must use the same active development directory. Do not edit application code in the primary main worktree.
+- Do not create a worktree for every task. Exceptions require an actual technical reason, an owner and a cleanup plan, such as genuine parallel work or preservation of unresolved local changes.
+- Before new development, verify post-merge CI and synchronize main through an explicitly approved safe fast-forward. Never move main underneath a worktree that has it checked out.
+- After merge and before switching or removing a worktree, inspect tracked, staged, untracked and valuable ignored files. Preserve private configuration, evidence and unpublished work. Never force cleanup to obtain a clean state.
+- Preserve historical local and remote branches unless their deletion is separately authorized. Install locked dependencies inside each active worktree; do not share virtual environments or node_modules.
+- ADR-018, exact manifest publication approval, SHA-bound merge approval, post-merge CI, test database isolation and every existing security/quality requirement remain mandatory.

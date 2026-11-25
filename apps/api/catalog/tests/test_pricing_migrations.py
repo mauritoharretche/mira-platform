@@ -32,7 +32,8 @@ class PricingSchemaCompatibilityTests(TestCase):
         for old, model in ((product, Product), (variant, Variant), (audit, CatalogAuditEntry),
                            (change, CatalogChangeAuditEntry)):
             current = model.objects.get(pk=old.pk)
-            self.assertEqual({field.name for field in old._meta.fields}, {field.name for field in current._meta.fields})
+            self.assertEqual({field.name for field in old._meta.fields} | ({"is_active"} if model is Variant else set()), {field.name for field in current._meta.fields})
+            if model is Variant: self.assertTrue(current.is_active)
             for field in old._meta.fields:
                 self.assertEqual(getattr(current, field.attname), getattr(old, field.attname))
         self.assertTrue(Product.objects.get(pk=product.id).is_active)
